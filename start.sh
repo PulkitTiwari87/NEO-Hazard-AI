@@ -12,7 +12,10 @@ python -m src.data.ingestion --max-pages "${NEOWS_MAX_PAGES:-25}" || true
 python -m src.data.validation || true
 python -m src.models.train || true
 python -m src.models.evaluate || true
+python -m src.experiments.run_all || true
 python -m src.anomaly.detect || true
 python -m src.explainability.shap_analysis --model random_forest || true
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_a_original || true
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_b_leakage_aware || true
 
 exec uvicorn backend.main:app --host 0.0.0.0 --port "${PORT:-8000}"

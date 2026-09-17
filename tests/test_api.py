@@ -71,3 +71,58 @@ def test_limitations_endpoint_is_explicit_about_scope():
     body = response.json()
     assert body["predicts_impacts"] is False
     assert body["is_operational_hazard_system"] is False
+
+
+def test_dataset_quality_reports_unavailable_without_ingested_data():
+    response = client.get("/api/dataset/quality")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert "detail" in body
+
+
+def test_dataset_correlations_reports_unavailable_without_ingested_data():
+    response = client.get("/api/dataset/correlations")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+
+
+def test_dataset_correlations_rejects_unknown_method():
+    response = client.get("/api/dataset/correlations?method=kendall")
+    assert response.status_code == 400
+
+
+def test_dataset_full_reports_unavailable_without_ingested_data():
+    response = client.get("/api/dataset/full")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert body["results"] == []
+
+
+def test_experiments_index_reports_unavailable_without_run():
+    response = client.get("/api/experiments")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert "experiment_definitions" in body
+    assert "experiment_a_original" in body["experiment_definitions"]
+    assert "experiment_b_leakage_aware" in body["experiment_definitions"]
+
+
+def test_experiment_combo_endpoints_report_unavailable_without_run():
+    for suffix in ["holdout", "cv", "threshold", "calibration", "errors", "explainability"]:
+        response = client.get(f"/api/experiments/experiment_a_original/models/random_forest/{suffix}")
+        assert response.status_code == 200
+        assert response.json()["status"] == "unavailable"
+
+
+def test_unknown_experiment_id_returns_404():
+    response = client.get("/api/experiments/not_a_real_experiment/models/random_forest/holdout")
+    assert response.status_code == 404
+
+
+def test_anomalies_reports_unavailable_without_run():
+    response = client.get("/api/anomalies")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"

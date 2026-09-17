@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.impute import SimpleImputer
@@ -31,6 +33,18 @@ from src.features.engineering import ALL_NUMERIC_FEATURES, CATEGORICAL_FEATURES,
 from src.models.registry import model_dir
 
 logger = logging.getLogger(__name__)
+
+MAX_TOP_ANOMALIES = 50
+
+
+def _native(value):
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 class AnomalyDetectionError(RuntimeError):
@@ -79,6 +93,8 @@ def run() -> pd.DataFrame:
     result["ml_anomaly_score"] = scores
     result["ml_flagged_outlier"] = is_outlier
 
+    analysis = build_anomaly_analysis(df, df_features, feature_columns, scores, is_outlier)
+
     registry_dir = model_dir("isolation_forest")
     registry_dir.mkdir(parents=True, exist_ok=True)
     import joblib
@@ -97,16 +113,74 @@ def run() -> pd.DataFrame:
             indent=2,
         )
     )
-    return result
+    return result, analysis
+
+
+def build_anomaly_analysis(
+    df: pd.DataFrame,
+    df_features: pd.DataFrame,
+    feature_columns: list[str],
+    scores,
+    is_outlier,
+) -> dict:
+    """Score distribution, dataset medians (for comparison), and the most
+    anomalous records with their full feature profile. Lower
+    `ml_anomaly_score` (IsolationForest's decision_function) means more
+    unusual relative to the rest of the dataset's feature space — it is not
+    a hazard, risk, or danger score, see docs/LIMITATIONS.md."""
+    counts, bin_edges = np.histogram(scores, bins=20)
+    order = np.argsort(scores)  # ascending: most anomalous first
+
+    numeric_columns = [c for c in feature_columns if c in ALL_NUMERIC_FEATURES]
+    dataset_medians = {col: _native(df_features[col].median()) for col in numeric_columns}
+
+    top_records = []
+    for rank, i in enumerate(order[:MAX_TOP_ANOMALIES], start=1):
+        row = df.iloc[i]
+        feature_row = df_features.iloc[i]
+        top_records.append(
+            {
+                "rank": rank,
+                "neo_id": _native(row.get("neo_id")),
+                "name": _native(row.get("name")),
+                "ml_anomaly_score": _native(scores[i]),
+                "ml_flagged_outlier": bool(is_outlier[i]),
+                "features": {col: _native(feature_row.get(col)) for col in feature_columns},
+            }
+        )
+
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "row_count": int(len(df)),
+        "flagged_outlier_count": int(np.sum(is_outlier)),
+        "feature_columns": feature_columns,
+        "dataset_medians": dataset_medians,
+        "score_distribution": {
+            "bin_edges": [float(x) for x in bin_edges],
+            "counts": [int(x) for x in counts],
+        },
+        "terminology_note": (
+            "ml_anomaly_score reflects how unusual a record's feature vector is "
+            "relative to the rest of this dataset, as seen by an unsupervised "
+            "Isolation Forest. Lower (more negative) scores are more unusual. "
+            "It does not use the hazard label, is not a risk/danger/impact "
+            "score, and an object can score as an outlier purely due to a "
+            "data-quality issue (e.g. a short observation arc)."
+        ),
+        "top_anomalies": top_records,
+    }
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    result = run()
+    result, analysis = run()
     settings.results_path.mkdir(parents=True, exist_ok=True)
     output_path = settings.results_path / "anomaly_scores.csv"
     result.to_csv(output_path, index=False)
+    analysis_path = settings.results_path / "anomaly_analysis.json"
+    analysis_path.write_text(json.dumps(analysis, indent=2, default=str))
     print(f"Wrote anomaly scores for {len(result)} objects -> {output_path}")
+    print(f"Wrote anomaly analysis -> {analysis_path}")
     print(f"Flagged as statistical outliers: {int(result['ml_flagged_outlier'].sum())}")
 
 

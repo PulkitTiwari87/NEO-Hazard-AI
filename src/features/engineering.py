@@ -92,15 +92,107 @@ def add_derived_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def build_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+def build_feature_matrix(
+    df: pd.DataFrame,
+    numeric_features: list[str] | None = None,
+    categorical_features: list[str] | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
     """Return (X, y) ready for a scikit-learn ColumnTransformer pipeline.
 
     Missing values are left as NaN — imputation is a pipeline step (fit only
     on the training fold) rather than being baked into the dataset here, to
     avoid leaking test-set statistics into training.
+
+    `numeric_features`/`categorical_features` default to the full
+    (Experiment A) feature set; pass an experiment's own lists (see
+    `EXPERIMENTS` below) to build that experiment's matrix instead.
     """
     df = add_derived_features(df)
-    feature_columns = ALL_NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    numeric_features = ALL_NUMERIC_FEATURES if numeric_features is None else numeric_features
+    categorical_features = CATEGORICAL_FEATURES if categorical_features is None else categorical_features
+    feature_columns = numeric_features + categorical_features
     x = df[feature_columns].copy()
     y = df[TARGET_COLUMN].astype(bool)
     return x, y
+
+
+# ---------------------------------------------------------------------------
+# Experiment definitions
+# ---------------------------------------------------------------------------
+# NASA/JPL's own `is_potentially_hazardous_asteroid` flag is, per NASA's
+# public documentation, essentially a threshold rule over an object's
+# Minimum Orbit Intersection Distance (`moid_au`) and absolute magnitude
+# (`absolute_magnitude_h`). A model trained with both features as inputs can
+# recover that rule almost exactly (see docs/MODEL_CARD.md for the observed
+# near-perfect tree-model scores) — which demonstrates the model can find
+# the rule, not that the other features carry independent predictive signal.
+#
+# Experiment A keeps the full feature set (useful for recovering/verifying
+# the existing classification boundary). Experiment B removes the two
+# label-defining features to test whether the remaining orbital, physical,
+# and close-approach features carry usable signal on their own. Experiment B
+# is not automatically "better" — it answers a different, narrower question.
+LEAKAGE_FEATURES = ["moid_au", "absolute_magnitude_h"]
+
+EXPERIMENT_A_ID = "experiment_a_original"
+EXPERIMENT_B_ID = "experiment_b_leakage_aware"
+
+EXPERIMENTS: dict[str, dict] = {
+    EXPERIMENT_A_ID: {
+        "id": EXPERIMENT_A_ID,
+        "name": "Experiment A — Original Feature Set",
+        "short_name": "Experiment A",
+        "numeric_features": ALL_NUMERIC_FEATURES,
+        "categorical_features": CATEGORICAL_FEATURES,
+        "excluded_features": [],
+        "purpose": (
+            "Uses every NASA-provided and derived feature, including moid_au "
+            "and absolute_magnitude_h. Primarily useful for understanding and "
+            "recovering NASA/JPL's existing potentially-hazardous screening "
+            "boundary from its own inputs — not for discovering new signal."
+        ),
+        "rationale": (
+            "This is the complete feature set documented in docs/FEATURES.md. "
+            "It establishes an upper bound on how well a model can reproduce "
+            "NASA's own labeling rule when given the exact quantities that "
+            "rule is a threshold function of."
+        ),
+    },
+    EXPERIMENT_B_ID: {
+        "id": EXPERIMENT_B_ID,
+        "name": "Experiment B — Leakage-Aware Feature Set",
+        "short_name": "Experiment B",
+        "numeric_features": [f for f in ALL_NUMERIC_FEATURES if f not in LEAKAGE_FEATURES],
+        "categorical_features": CATEGORICAL_FEATURES,
+        "excluded_features": LEAKAGE_FEATURES,
+        "purpose": (
+            "Removes moid_au and absolute_magnitude_h — the two quantities "
+            "NASA/JPL's is_potentially_hazardous_asteroid rule is directly a "
+            "threshold function of — to test whether the remaining orbital, "
+            "physical, and close-approach features contain useful predictive "
+            "signal on their own, without directly supplying the "
+            "label-defining variables."
+        ),
+        "rationale": (
+            "moid_au and absolute_magnitude_h are not merely correlated with "
+            "the target; per NASA's own published PHA definition they are "
+            "(approximately) the rule the target is computed from. Including "
+            "them as model inputs lets a model recover that rule rather than "
+            "demonstrate independent predictive signal, which is a form of "
+            "target leakage. Experiment B is a leakage-aware ablation, not a "
+            "claim that the removed features are unimportant to the real "
+            "screening question — see docs/LIMITATIONS.md."
+        ),
+    },
+}
+
+
+def experiment_feature_columns(experiment_id: str) -> list[str]:
+    spec = EXPERIMENTS[experiment_id]
+    return list(spec["numeric_features"]) + list(spec["categorical_features"])
+
+
+# Classifiers compared within every experiment (src/experiments/run_all.py).
+# Kept here (not in src/experiments/run_all.py) so backend/main.py can import
+# this list without pulling scikit-learn/xgboost into the API process.
+MODEL_NAMES = ["logistic_regression", "random_forest", "xgboost"]

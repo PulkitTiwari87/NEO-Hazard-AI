@@ -25,7 +25,7 @@ import pandas as pd
 import shap
 
 from src.config import PROCESSED_DATASET_PATH, settings
-from src.features.engineering import ALL_NUMERIC_FEATURES, CATEGORICAL_FEATURES, build_feature_matrix
+from src.features.engineering import EXPERIMENTS, build_feature_matrix
 from src.models.registry import load_model
 
 logger = logging.getLogger(__name__)
@@ -37,15 +37,20 @@ class ExplainabilityError(RuntimeError):
     pass
 
 
-def run(model_name: str = "random_forest") -> tuple[dict, list]:
+def run(model_name: str = "random_forest", experiment_id: str | None = None) -> tuple[dict, list]:
     if not PROCESSED_DATASET_PATH.exists():
         raise ExplainabilityError(
             f"Processed dataset not found at {PROCESSED_DATASET_PATH}. Run the data pipeline first."
         )
 
-    pipeline = load_model(model_name)
+    registry_key = f"{experiment_id}/{model_name}" if experiment_id else model_name
+    pipeline = load_model(registry_key)
     df = pd.read_csv(PROCESSED_DATASET_PATH)
-    x, _ = build_feature_matrix(df)
+    if experiment_id:
+        spec = EXPERIMENTS[experiment_id]
+        x, _ = build_feature_matrix(df, list(spec["numeric_features"]), list(spec["categorical_features"]))
+    else:
+        x, _ = build_feature_matrix(df)
 
     preprocessor = pipeline.named_steps["preprocess"]
     model = pipeline.named_steps["model"]
@@ -97,18 +102,41 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description="Generate SHAP explanations for a trained model.")
     parser.add_argument("--model", default="random_forest")
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        choices=list(EXPERIMENTS.keys()),
+        help=(
+            "If set, explains the experiment-scoped model trained by "
+            "`python -m src.experiments.run_all` (model_registry/<experiment>/<model>/) "
+            "and writes results/experiments/<experiment>/<model>/shap_*.json instead of "
+            "the legacy flat results/shap_*.json."
+        ),
+    )
     args = parser.parse_args()
 
-    global_importance, local_examples = run(model_name=args.model)
+    global_importance, local_examples = run(model_name=args.model, experiment_id=args.experiment)
 
-    settings.results_path.mkdir(parents=True, exist_ok=True)
-    (settings.results_path / "shap_global_importance.json").write_text(
-        json.dumps({"model": args.model, "mean_abs_shap_by_feature": global_importance}, indent=2)
+    if args.experiment:
+        out_dir = settings.results_path / "experiments" / args.experiment / args.model
+    else:
+        out_dir = settings.results_path
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    (out_dir / "shap_global_importance.json").write_text(
+        json.dumps(
+            {
+                "model": args.model,
+                "experiment_id": args.experiment,
+                "mean_abs_shap_by_feature": global_importance,
+            },
+            indent=2,
+        )
     )
-    (settings.results_path / "shap_local_examples.json").write_text(
-        json.dumps({"model": args.model, "examples": local_examples}, indent=2)
+    (out_dir / "shap_local_examples.json").write_text(
+        json.dumps({"model": args.model, "experiment_id": args.experiment, "examples": local_examples}, indent=2)
     )
-    print(f"Wrote SHAP explainability outputs for model '{args.model}' -> {settings.results_path}")
+    print(f"Wrote SHAP explainability outputs for model '{args.model}' -> {out_dir}")
 
 
 if __name__ == "__main__":
