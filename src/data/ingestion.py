@@ -97,6 +97,12 @@ def fetch_neows_browse(
     """
     api_key = api_key or settings.nasa_api_key
     base_url = base_url or settings.nasa_neows_base_url
+    # Diagnostic only: confirms whether a custom key reached the process
+    # without ever logging the key itself.
+    logger.info(
+        "NASA_API_KEY in use: %s",
+        "DEMO_KEY (default)" if api_key == "DEMO_KEY" else f"custom key (length={len(api_key)})",
+    )
     url = f"{base_url}{NEOWS_BROWSE_ENDPOINT}"
 
     if not api_key:
