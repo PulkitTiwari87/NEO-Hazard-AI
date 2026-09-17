@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { api, type ExperimentDetailResponse } from '../api/client'
 import { UnavailableNotice } from '../components/UnavailableNotice'
+import { StatGrid, StatTile } from '../components/StatTile'
 import { ConfusionMatrixGrid, CvFoldBars, PrCurveChart, RocCurveChart, ThresholdChart } from '../components/charts'
 
 function fmt(value: number | null | undefined, digits = 3): string {
@@ -46,12 +48,12 @@ export function ExperimentDetail() {
         <p className="mt-1 text-xs text-slate-500">{String(data.metadata?.experiment_purpose ?? '')}</p>
       </div>
 
-      <section className="grid gap-3 sm:grid-cols-4">
-        <Stat label="Test F1" value={fmt(data.test_metrics?.f1 as number)} />
-        <Stat label="Test Precision" value={fmt(data.test_metrics?.precision as number)} />
-        <Stat label="Test Recall" value={fmt(data.test_metrics?.recall as number)} />
-        <Stat label="Test ROC-AUC" value={fmt(data.test_metrics?.roc_auc as number)} />
-      </section>
+      <StatGrid className="grid gap-3 sm:grid-cols-4">
+        <StatTile label="Test F1" value={fmt(data.test_metrics?.f1 as number)} />
+        <StatTile label="Test Precision" value={fmt(data.test_metrics?.precision as number)} />
+        <StatTile label="Test Recall" value={fmt(data.test_metrics?.recall as number)} />
+        <StatTile label="Test ROC-AUC" value={fmt(data.test_metrics?.roc_auc as number)} />
+      </StatGrid>
       {ci && (
         <p className="text-xs text-slate-500">
           F1 bootstrap 95% CI: [{fmt(ci.ci_low)}, {fmt(ci.ci_high)}]
@@ -142,27 +144,20 @@ export function ExperimentDetail() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-xl font-semibold text-slate-100">{value}</p>
-    </div>
-  )
-}
-
 function FeatureBarList({ entries }: { entries: [string, number][] }) {
   if (!entries.length) return <p className="text-xs text-slate-500">No data.</p>
   const max = Math.max(...entries.map(([, v]) => Math.abs(v)), 1e-9)
   return (
     <div className="space-y-1">
-      {entries.map(([name, value]) => (
+      {entries.map(([name, value], i) => (
         <div key={name} className="flex items-center gap-2 text-xs">
           <span className="w-56 truncate font-mono text-slate-400">{name}</span>
           <div className="h-3 flex-1 rounded bg-white/[0.04]">
-            <div
+            <motion.div
               className="h-3 rounded bg-sky-500/60"
-              style={{ width: `${(Math.abs(value) / max) * 100}%` }}
+              initial={{ width: 0 }}
+              animate={{ width: `${(Math.abs(value) / max) * 100}%` }}
+              transition={{ type: 'spring', damping: 1, duration: 0.5, delay: i * 0.03 }}
             />
           </div>
           <span className="w-16 text-right font-mono text-slate-500">{value.toFixed(4)}</span>

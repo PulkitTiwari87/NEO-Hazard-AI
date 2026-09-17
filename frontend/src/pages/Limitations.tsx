@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import { api, type LimitationsResponse } from '../api/client'
 
 const POINTS = [
@@ -36,19 +37,34 @@ export function Limitations() {
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Limitations</h2>
 
       {scope && (
-        <p className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
+        <motion.p
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: 'spring', damping: 1, duration: 0.35 }}
+          className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300"
+        >
           {scope.summary}
-        </p>
+        </motion.p>
       )}
 
-      <div className="space-y-3">
+      <motion.div
+        initial="hidden"
+        animate="show"
+        variants={{ show: { transition: { staggerChildren: 0.05 } } }}
+        className="space-y-3"
+      >
         {POINTS.map((point) => (
-          <div key={point.title} className="rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3">
+          <motion.div
+            key={point.title}
+            variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }}
+            transition={{ type: 'spring', damping: 1, duration: 0.3 }}
+            className="rounded-lg border border-white/10 bg-white/[0.02] px-4 py-3"
+          >
             <p className="text-sm font-medium text-slate-100">{point.title}</p>
             <p className="mt-1 text-sm text-slate-400">{point.body}</p>
-          </div>
+          </motion.div>
         ))}
-      </div>
+      </motion.div>
 
       <p className="text-xs text-slate-500">
         Full statement: <code>docs/LIMITATIONS.md</code>

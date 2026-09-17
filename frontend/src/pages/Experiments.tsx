@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { api, type ExperimentsListResponse } from '../api/client'
 import { UnavailableNotice } from '../components/UnavailableNotice'
 
 function fmt(value: number | null | undefined, digits = 3): string {
   return value === null || value === undefined ? 'N/A' : value.toFixed(digits)
 }
+
+const rowVariants = { hidden: { opacity: 0, x: -6 }, show: { opacity: 1, x: 0 } }
 
 export function Experiments() {
   const [data, setData] = useState<ExperimentsListResponse | null>(null)
@@ -38,8 +41,14 @@ export function Experiments() {
       )}
 
       {data?.status === 'ok' &&
-        Object.entries(data.experiments).map(([key, exp]) => (
-          <section key={key} className="space-y-2">
+        Object.entries(data.experiments).map(([key, exp], sectionIndex) => (
+          <motion.section
+            key={key}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: 'spring', damping: 1, duration: 0.4, delay: sectionIndex * 0.06 }}
+            className="space-y-2"
+          >
             <div>
               <h3 className="text-sm font-medium text-slate-100">{exp.display_name}</h3>
               <p className="text-xs text-slate-500">{exp.purpose}</p>
@@ -58,9 +67,18 @@ export function Experiments() {
                     <th className="px-3 py-2"></th>
                   </tr>
                 </thead>
-                <tbody>
+                <motion.tbody
+                  initial="hidden"
+                  animate="show"
+                  variants={{ show: { transition: { staggerChildren: 0.04 } } }}
+                >
                   {Object.entries(exp.models).map(([modelName, m]) => (
-                    <tr key={modelName} className="border-t border-white/5">
+                    <motion.tr
+                      key={modelName}
+                      variants={rowVariants}
+                      transition={{ type: 'spring', damping: 1, duration: 0.3 }}
+                      className="border-t border-white/5 hover:bg-white/[0.02]"
+                    >
                       <td className="px-3 py-2 font-mono">{modelName}</td>
                       {!m.executed ? (
                         <td colSpan={6} className="px-3 py-2 text-slate-600">
@@ -80,17 +98,19 @@ export function Experiments() {
                       )}
                       <td className="px-3 py-2">
                         {m.executed && (
-                          <Link to={`/experiments/${key}/${modelName}`} className="text-sky-400 hover:underline">
-                            Details →
-                          </Link>
+                          <motion.span whileTap={{ scale: 0.95 }} className="inline-block">
+                            <Link to={`/experiments/${key}/${modelName}`} className="text-sky-400 hover:underline">
+                              Details →
+                            </Link>
+                          </motion.span>
                         )}
                       </td>
-                    </tr>
+                    </motion.tr>
                   ))}
-                </tbody>
+                </motion.tbody>
               </table>
             </div>
-          </section>
+          </motion.section>
         ))}
     </div>
   )

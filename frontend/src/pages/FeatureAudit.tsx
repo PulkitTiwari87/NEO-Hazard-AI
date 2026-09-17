@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import { api, type FeatureAuditResponse } from '../api/client'
 import { UnavailableNotice } from '../components/UnavailableNotice'
+
+const cardVariants = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
+const cardSpring = { type: 'spring' as const, damping: 1, duration: 0.35 }
 
 export function FeatureAudit() {
   const [audit, setAudit] = useState<FeatureAuditResponse | null>(null)
@@ -25,8 +29,18 @@ export function FeatureAudit() {
 
       {audit && (
         <>
-          <section className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-rose-700/40 bg-rose-950/20 px-4 py-3">
+          <motion.section
+            initial="hidden"
+            animate="show"
+            variants={{ show: { transition: { staggerChildren: 0.06 } } }}
+            className="grid gap-3 sm:grid-cols-3"
+          >
+            <motion.div
+              variants={cardVariants}
+              transition={cardSpring}
+              whileHover={{ y: -2 }}
+              className="rounded-lg border border-rose-700/40 bg-rose-950/20 px-4 py-3"
+            >
               <p className="text-xs font-medium uppercase tracking-wide text-rose-300">
                 Category A — label-defining
               </p>
@@ -34,8 +48,13 @@ export function FeatureAudit() {
               <p className="mt-1 text-xs text-rose-200/70">
                 NASA/JPL's PHA rule is a direct threshold over these two fields.
               </p>
-            </div>
-            <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 px-4 py-3">
+            </motion.div>
+            <motion.div
+              variants={cardVariants}
+              transition={cardSpring}
+              whileHover={{ y: -2 }}
+              className="rounded-lg border border-amber-700/40 bg-amber-950/20 px-4 py-3"
+            >
               <p className="text-xs font-medium uppercase tracking-wide text-amber-300">
                 Category B — derived from A
               </p>
@@ -44,8 +63,13 @@ export function FeatureAudit() {
                 Diameter is computed by NASA from absolute magnitude + an assumed albedo — a transform of a
                 Category-A field, not an independent measurement.
               </p>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
+            </motion.div>
+            <motion.div
+              variants={cardVariants}
+              transition={cardSpring}
+              whileHover={{ y: -2 }}
+              className="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3"
+            >
               <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
                 Category F — excluded as invalid
               </p>
@@ -55,22 +79,35 @@ export function FeatureAudit() {
               <p className="mt-1 text-xs text-slate-500">
                 Epoch-dependent orbital phase at catalog time, not a fixed property of the object.
               </p>
-            </div>
-          </section>
+            </motion.div>
+          </motion.section>
 
           <section className="space-y-3">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
               Feature sets by experiment
             </h3>
-            {Object.entries(audit.feature_sets).map(([key, fs]) => (
-              <div key={key} className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-                <p className="text-sm font-medium text-slate-100">{fs.display_name}</p>
-                <p className="mt-1 text-xs text-slate-400">{fs.purpose}</p>
-                <p className="mt-2 font-mono text-xs text-slate-500">
-                  {[...fs.numeric_features, ...fs.categorical_features].join(', ')}
-                </p>
-              </div>
-            ))}
+            <motion.div
+              initial="hidden"
+              animate="show"
+              variants={{ show: { transition: { staggerChildren: 0.06 } } }}
+              className="space-y-3"
+            >
+              {Object.entries(audit.feature_sets).map(([key, fs]) => (
+                <motion.div
+                  key={key}
+                  variants={cardVariants}
+                  transition={cardSpring}
+                  whileHover={{ borderColor: 'rgba(255,255,255,0.2)' }}
+                  className="rounded-lg border border-white/10 bg-white/[0.02] p-4"
+                >
+                  <p className="text-sm font-medium text-slate-100">{fs.display_name}</p>
+                  <p className="mt-1 text-xs text-slate-400">{fs.purpose}</p>
+                  <p className="mt-2 font-mono text-xs text-slate-500">
+                    {[...fs.numeric_features, ...fs.categorical_features].join(', ')}
+                  </p>
+                </motion.div>
+              ))}
+            </motion.div>
           </section>
         </>
       )}
