@@ -1,4 +1,5 @@
 import { Fragment } from 'react'
+import { motion } from 'framer-motion'
 
 // Minimal, dependency-free SVG charts. Every point plotted here comes
 // straight from a backend response (real ROC/PR curve coordinates, real
@@ -10,6 +11,11 @@ import { Fragment } from 'react'
 const WIDTH = 320
 const HEIGHT = 240
 const PAD = 34
+
+// Critically damped (no overshoot) throughout this file — a chart drawing
+// itself in isn't a momentum gesture the user initiated, so bounce would
+// read as decorative rather than physical (apple-design §4).
+const drawIn = { type: 'spring' as const, damping: 1, duration: 0.6 }
 
 function scale(value: number, min: number, max: number, outMin: number, outMax: number) {
   if (max === min) return (outMin + outMax) / 2
@@ -50,7 +56,15 @@ export function RocCurveChart({ fpr, tpr, aucLabel }: { fpr: number[]; tpr: numb
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full max-w-sm text-slate-400">
       <AxisFrame xLabel="False positive rate" yLabel="True positive rate" />
       <line x1={diagStart.split(',')[0]} y1={diagStart.split(',')[1]} x2={diagEnd.split(',')[0]} y2={diagEnd.split(',')[1]} className="stroke-white/15" strokeDasharray="4 4" />
-      <polyline points={points.join(' ')} fill="none" className="stroke-sky-400" strokeWidth={2} />
+      <motion.polyline
+        points={points.join(' ')}
+        fill="none"
+        className="stroke-sky-400"
+        strokeWidth={2}
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={drawIn}
+      />
       {aucLabel && (
         <text x={WIDTH - 14} y={22} textAnchor="end" className="fill-sky-300 text-[10px] font-mono">
           {aucLabel}
@@ -70,7 +84,15 @@ export function PrCurveChart({ precision, recall, apLabel }: { precision: number
   return (
     <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full max-w-sm text-slate-400">
       <AxisFrame xLabel="Recall" yLabel="Precision" />
-      <polyline points={points.join(' ')} fill="none" className="stroke-emerald-400" strokeWidth={2} />
+      <motion.polyline
+        points={points.join(' ')}
+        fill="none"
+        className="stroke-emerald-400"
+        strokeWidth={2}
+        initial={{ pathLength: 0 }}
+        animate={{ pathLength: 1 }}
+        transition={drawIn}
+      />
       {apLabel && (
         <text x={WIDTH - 14} y={22} textAnchor="end" className="fill-emerald-300 text-[10px] font-mono">
           {apLabel}
@@ -95,13 +117,24 @@ export function ThresholdChart({
     <div className="space-y-2">
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="w-full max-w-sm text-slate-400">
         <AxisFrame xLabel="Decision threshold" yLabel="Score" />
-        {series.map(({ key, color }) => {
+        {series.map(({ key, color }, i) => {
           const points = rows.map((row) => {
             const x = scale(row.threshold, 0, 1, PAD, WIDTH - 10)
             const y = scale(row[key], 0, 1, HEIGHT - PAD, 10)
             return `${x},${y}`
           })
-          return <polyline key={key} points={points.join(' ')} fill="none" className={color} strokeWidth={2} />
+          return (
+            <motion.polyline
+              key={key}
+              points={points.join(' ')}
+              fill="none"
+              className={color}
+              strokeWidth={2}
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{ ...drawIn, delay: i * 0.08 }}
+            />
+          )
         })}
       </svg>
       <div className="flex gap-4 text-[11px] text-slate-400">
@@ -134,13 +167,17 @@ export function ConfusionMatrixGrid({
             {row.map((value, j) => {
               const intensity = max > 0 ? value / max : 0
               return (
-                <div
+                <motion.div
                   key={`${i}-${j}`}
+                  initial={{ opacity: 0, scale: 0.92 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  whileHover={{ scale: 1.04 }}
+                  transition={{ type: 'spring', damping: 1, duration: 0.35, delay: (i * 2 + j) * 0.05 }}
                   className="flex h-16 w-24 items-center justify-center rounded-md border border-white/10 font-mono text-lg text-slate-100"
                   style={{ backgroundColor: `rgba(56, 189, 248, ${0.08 + intensity * 0.35})` }}
                 >
                   {value}
-                </div>
+                </motion.div>
               )
             })}
           </Fragment>
@@ -154,13 +191,16 @@ export function CvFoldBars({ folds, metricKey = 'f1' }: { folds: Record<string, 
   if (!folds?.length) return <p className="text-xs text-slate-500">No fold-level data.</p>
   return (
     <div className="flex items-end gap-2">
-      {folds.map((fold) => {
+      {folds.map((fold, i) => {
         const value = Number(fold[metricKey] ?? 0)
         return (
           <div key={String(fold.fold)} className="flex flex-col items-center gap-1">
-            <div
+            <motion.div
               className="w-8 rounded-t bg-sky-500/60"
-              style={{ height: `${Math.max(4, value * 100)}px` }}
+              initial={{ height: 0 }}
+              animate={{ height: `${Math.max(4, value * 100)}px` }}
+              whileHover={{ backgroundColor: 'rgba(56, 189, 248, 0.85)' }}
+              transition={{ type: 'spring', damping: 1, duration: 0.5, delay: i * 0.06 }}
               title={`Fold ${fold.fold}: ${value.toFixed(3)}`}
             />
             <span className="text-[10px] text-slate-500">F{String(fold.fold)}</span>

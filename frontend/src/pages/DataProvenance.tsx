@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import { api, type DataSourceInfo, type FeaturesResponse } from '../api/client'
+
+const fadeUp = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }
+const spring = { type: 'spring' as const, damping: 1, duration: 0.35 }
+const rowVariants = { hidden: { opacity: 0, x: -6 }, show: { opacity: 1, x: 0 } }
 
 export function DataProvenance() {
   const [source, setSource] = useState<DataSourceInfo | null>(null)
@@ -17,7 +22,13 @@ export function DataProvenance() {
           Source
         </h2>
         {source ? (
-          <div className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-5 py-4 text-sm">
+          <motion.div
+            initial="hidden"
+            animate="show"
+            variants={fadeUp}
+            transition={spring}
+            className="space-y-2 rounded-lg border border-white/10 bg-white/[0.03] px-5 py-4 text-sm"
+          >
             <p>
               <span className="text-slate-500">Name: </span>
               {source.source_name}
@@ -33,7 +44,7 @@ export function DataProvenance() {
               </span>
             </p>
             <p className="text-slate-400">{source.note}</p>
-          </div>
+          </motion.div>
         ) : (
           <p className="text-sm text-slate-500">Loading…</p>
         )}
@@ -60,15 +71,24 @@ export function DataProvenance() {
                       <th className="px-3 py-2">Unit</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <motion.tbody
+                    initial="hidden"
+                    animate="show"
+                    variants={{ show: { transition: { staggerChildren: 0.04 } } }}
+                  >
                     {features.derived_features.map((f) => (
-                      <tr key={f.name} className="border-t border-white/5">
+                      <motion.tr
+                        key={f.name}
+                        variants={rowVariants}
+                        transition={{ type: 'spring', damping: 1, duration: 0.3 }}
+                        className="border-t border-white/5 hover:bg-white/[0.02]"
+                      >
                         <td className="px-3 py-2 font-mono">{f.name}</td>
                         <td className="px-3 py-2 font-mono text-slate-400">{f.formula}</td>
                         <td className="px-3 py-2 text-slate-400">{f.unit}</td>
-                      </tr>
+                      </motion.tr>
                     ))}
-                  </tbody>
+                  </motion.tbody>
                 </table>
               </div>
               <p className="mt-2 text-slate-500">
