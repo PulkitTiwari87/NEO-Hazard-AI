@@ -23,8 +23,25 @@ export function ModelPerformance() {
   return (
     <div className="space-y-6">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-        Model performance
+        Experiment A — Original / Label-Defining Feature Experiment
       </h2>
+      <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 px-4 py-3 text-sm text-amber-200">
+        <p>
+          Performance here is expected to be extremely high (F1 up to 1.000 for the tree models) because this
+          feature set includes <code>moid_au</code> and <code>absolute_magnitude_h</code> — the two variables
+          NASA/JPL's own PHA classification is a direct threshold function of — plus a diameter feature NASA
+          derives from magnitude. This is <strong>not evidence of novel predictive capability</strong>; it shows
+          the model recovering NASA's existing rule from its own inputs. See{' '}
+          <a href="/feature-audit" className="underline hover:text-amber-100">
+            Feature Audit
+          </a>{' '}
+          and the leakage-audited{' '}
+          <a href="/experiments" className="underline hover:text-amber-100">
+            Experiments
+          </a>{' '}
+          page (the primary research view) for what remains once those features are removed.
+        </p>
+      </div>
 
       {models?.status === 'unavailable' && (
         <UnavailableNotice detail="No trained models found. Run `python -m src.models.train`." />

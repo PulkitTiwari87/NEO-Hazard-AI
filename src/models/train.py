@@ -1,5 +1,23 @@
 """Train and evaluate classifiers for the NEO potentially-hazardous label.
 
+**Legacy single-experiment pipeline — this is "Experiment A / Original /
+Label-Defining Feature Experiment" only.** It trains on every feature in
+`src/features/engineering.py`, including `moid_au` and
+`absolute_magnitude_h`, which are the two fields NASA/JPL's own PHA
+screening rule thresholds directly — see `docs/FEATURE_AUDIT.md`. Its
+near-perfect scores demonstrate that ML can recover NASA's existing
+classification boundary when given the variables that define it; they are
+**not** evidence of novel predictive capability (`docs/LIMITATIONS.md`).
+
+Kept (not deleted) for two reasons: it reproduces that specific historical
+result, and `model_registry/random_forest` from this script is still what
+`POST /api/predict` serves. The primary research benchmark — four
+leakage-audited feature sets (A/B/C/D) x four models, 5-fold CV, a held-out
+test set, and full error/explainability analysis — is
+`python -m src.experiments.run_all` (`src/experiments/run_all.py`); see
+`docs/RESULTS.md` for its output and `docs/FEATURE_AUDIT.md` for the
+feature-by-feature reasoning behind each experiment.
+
 Usage:
     python -m src.models.train
 

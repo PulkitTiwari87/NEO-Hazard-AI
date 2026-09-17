@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from src.config import MODEL_METRICS_PATH, PROCESSED_DATASET_PATH, settings
+from src.config import MODEL_METRICS_PATH, PROCESSED_DATASET_PATH, VALIDATION_REPORT_PATH, settings
 from src.features.engineering import (
     ALL_NUMERIC_FEATURES,
     CATEGORICAL_FEATURES,
@@ -28,6 +28,13 @@ from src.features.engineering import (
     TARGET_COLUMN,
     build_feature_matrix,
 )
+from src.features.feature_sets import (
+    EPOCH_DEPENDENT_FEATURES,
+    FEATURE_SETS,
+    LABEL_DEFINING_NUMERIC_FEATURES,
+    LABEL_DERIVED_NUMERIC_FEATURES,
+)
+from src.experiments.tuning import build_estimators
 from src.models.registry import list_registered_models, load_metadata, load_model
 
 app = FastAPI(
@@ -171,6 +178,151 @@ def features() -> dict[str, Any]:
         "nasa_provided_features": PASSTHROUGH_NUMERIC_FEATURES,
         "categorical_features": CATEGORICAL_FEATURES,
         "derived_features": FEATURE_DEFINITIONS,
+    }
+
+
+EXPERIMENT_MODEL_NAMES = list(build_estimators(0))
+
+
+def _experiment_model_dir(experiment: str, model_name: str):
+    return settings.results_path / "experiments" / experiment / model_name
+
+
+def _read_experiment_json(experiment: str, model_name: str, filename: str) -> Any:
+    path = _experiment_model_dir(experiment, model_name) / filename
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+@app.get("/api/feature-audit")
+def feature_audit() -> dict[str, Any]:
+    """See docs/FEATURE_AUDIT.md for the full reasoning behind this
+    classification. This endpoint and that document share the same
+    source of truth: src/features/feature_sets.py.
+    """
+    return {
+        "label_defining_features": LABEL_DEFINING_NUMERIC_FEATURES,
+        "label_derived_features": LABEL_DERIVED_NUMERIC_FEATURES,
+        "epoch_dependent_excluded_features": EPOCH_DEPENDENT_FEATURES,
+        "documentation": "docs/FEATURE_AUDIT.md",
+        "feature_sets": {
+            key: {
+                "display_name": fs.display_name,
+                "purpose": fs.purpose,
+                "numeric_features": fs.numeric_features,
+                "categorical_features": fs.categorical_features,
+            }
+            for key, fs in FEATURE_SETS.items()
+        },
+    }
+
+
+@app.get("/api/experiments")
+def list_experiments() -> dict[str, Any]:
+    """Status of every experiment x model combination. `executed: false`
+    means the research benchmark (`python -m src.experiments.run_all`) has
+    not produced artifacts for that combination yet — this endpoint never
+    fabricates a value in that case, per docs/LIMITATIONS.md and section
+    40 of the research brief ("the frontend must never become the source
+    of truth").
+    """
+    experiments: dict[str, Any] = {}
+    for key, fs in FEATURE_SETS.items():
+        models: dict[str, Any] = {}
+        for model_name in EXPERIMENT_MODEL_NAMES:
+            metadata = _read_experiment_json(key, model_name, "metadata.json")
+            if metadata is None:
+                models[model_name] = {"executed": False}
+                continue
+            cv_metrics = _read_experiment_json(key, model_name, "cv_metrics.json") or {}
+            test_metrics = _read_experiment_json(key, model_name, "test_metrics.json") or {}
+            models[model_name] = {
+                "executed": True,
+                "trained_at_utc": metadata.get("trained_at_utc"),
+                "cv_f1_mean": (cv_metrics.get("f1") or {}).get("mean"),
+                "cv_f1_std": (cv_metrics.get("f1") or {}).get("std"),
+                "test_f1": test_metrics.get("f1"),
+                "test_precision": test_metrics.get("precision"),
+                "test_recall": test_metrics.get("recall"),
+                "test_accuracy": test_metrics.get("accuracy"),
+                "test_roc_auc": test_metrics.get("roc_auc"),
+                "test_pr_auc": test_metrics.get("pr_auc"),
+            }
+        experiments[key] = {
+            "display_name": fs.display_name,
+            "purpose": fs.purpose,
+            "feature_columns": fs.feature_columns,
+            "models": models,
+        }
+    any_executed = any(
+        m["executed"] for exp in experiments.values() for m in exp["models"].values()
+    )
+    return {"status": "ok" if any_executed else "unavailable", "experiments": experiments}
+
+
+@app.get("/api/experiments/{experiment}/{model_name}")
+def experiment_model_detail(experiment: str, model_name: str) -> dict[str, Any]:
+    if experiment not in FEATURE_SETS:
+        raise HTTPException(status_code=404, detail=f"Unknown experiment '{experiment}'.")
+    if model_name not in EXPERIMENT_MODEL_NAMES:
+        raise HTTPException(status_code=404, detail=f"Unknown model '{model_name}'.")
+
+    metadata = _read_experiment_json(experiment, model_name, "metadata.json")
+    if metadata is None:
+        return {
+            "status": "unavailable",
+            "detail": (
+                f"Experiment '{experiment}' / model '{model_name}' has not been executed "
+                "yet. Run `python -m src.experiments.run_all`."
+            ),
+        }
+
+    error_analysis = _read_experiment_json(experiment, model_name, "error_analysis.json") or {}
+    return {
+        "status": "ok",
+        "metadata": metadata,
+        "cv_metrics": _read_experiment_json(experiment, model_name, "cv_metrics.json"),
+        "fold_metrics": _read_experiment_json(experiment, model_name, "fold_metrics.json"),
+        "test_metrics": _read_experiment_json(experiment, model_name, "test_metrics.json"),
+        "confusion_matrix": _read_experiment_json(experiment, model_name, "confusion_matrix.json"),
+        "roc_curve": _read_experiment_json(experiment, model_name, "roc_curve.json"),
+        "pr_curve": _read_experiment_json(experiment, model_name, "pr_curve.json"),
+        "threshold_analysis": _read_experiment_json(experiment, model_name, "threshold_analysis.json"),
+        "calibration": _read_experiment_json(experiment, model_name, "calibration.json"),
+        "feature_importance": _read_experiment_json(experiment, model_name, "feature_importance.json"),
+        "shap_summary": _read_experiment_json(experiment, model_name, "shap_summary.json"),
+        "error_summary": error_analysis.get("feature_range_summary"),
+        # Capped so a single response never ships thousands of rows —
+        # full predictions.csv is still on disk for anyone who wants it.
+        "false_positives_sample": (error_analysis.get("false_positives") or [])[:25],
+        "false_negatives_sample": (error_analysis.get("false_negatives") or [])[:25],
+    }
+
+
+@app.get("/api/reproducibility")
+def reproducibility() -> dict[str, Any]:
+    validation_report = None
+    if VALIDATION_REPORT_PATH.exists():
+        validation_report = json.loads(VALIDATION_REPORT_PATH.read_text())
+
+    summary_path = settings.results_path / "experiments" / "summary.json"
+    summary = json.loads(summary_path.read_text()) if summary_path.exists() else None
+
+    return {
+        "random_seed": settings.random_seed,
+        "n_cv_folds": 5,
+        "outer_test_size": 0.2,
+        "feature_sets": list(FEATURE_SETS),
+        "models": EXPERIMENT_MODEL_NAMES,
+        "dataset_provenance": validation_report,
+        "last_benchmark_run": summary,
+        "reproduce_with": [
+            "python -m src.data.ingestion",
+            "python -m src.data.validation",
+            "python -m src.experiments.run_all",
+            "python -m src.experiments.generate_report",
+        ],
     }
 
 
