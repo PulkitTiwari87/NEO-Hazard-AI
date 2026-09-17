@@ -1,5 +1,12 @@
 """Metric computation for binary classification of the NEO hazard label.
 
+**Legacy single-experiment pipeline — evaluates the "Experiment A /
+Original" models trained by `src/models/train.py` only.** See that
+module's docstring and `docs/FEATURE_AUDIT.md` for why this experiment's
+near-perfect scores are expected, not evidence of novel signal, and see
+`src/experiments/run_all.py` / `docs/RESULTS.md` for the primary
+leakage-audited research benchmark (Experiments A-D).
+
 Usage:
     python -m src.models.evaluate
 

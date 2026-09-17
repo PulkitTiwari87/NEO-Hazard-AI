@@ -32,6 +32,19 @@ export function Overview() {
         </p>
       </section>
 
+      <section className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] px-6 py-5">
+        <p className="text-sm font-medium text-emerald-300">Research question</p>
+        <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-300">
+          The original feature set includes <code>moid_au</code> and <code>absolute_magnitude_h</code> — the two
+          fields NASA/JPL's own PHA rule directly thresholds — which is why the tree models score near-perfectly
+          there (see <a href="/original-experiment" className="underline hover:text-emerald-200">Experiment A</a>).
+          The primary research question this project now asks is: after removing those features (and everything
+          derived from them), how much signal is actually left? See{' '}
+          <a href="/feature-audit" className="underline hover:text-emerald-200">Feature Audit</a> and{' '}
+          <a href="/experiments" className="underline hover:text-emerald-200">Experiments</a>.
+        </p>
+      </section>
+
       <section>
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
           Dataset statistics

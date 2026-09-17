@@ -32,12 +32,27 @@ larger `--max-pages` would produce a different, still-real dataset.
 NASA's NeoWs API publishes orbital elements, physical-size estimates, and
 close-approach kinematics for every catalogued Near-Earth Object, along
 with NASA/JPL's own `is_potentially_hazardous_asteroid` screening flag.
-This project asks a narrow, answerable question: **how well can a
+
+The first version of this project asked a narrow question — can a
 statistical model recover that existing screening label from the object's
-other NASA-provided orbital/physical features** — and, separately, which
-objects look statistically unusual in that same feature space. It does
-not attempt to improve on, second-guess, or extend NASA/JPL's own hazard
-determination.
+other NASA-provided features — and got a narrow answer back: yes, almost
+perfectly (F1=1.000 for the tree models), because two of the "other"
+features (`moid_au`, `absolute_magnitude_h`) are literally the two
+quantities NASA's rule thresholds. See
+[`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md) for the full audit this
+prompted (including catching that the diameter feature is itself a
+NASA-side derived transform of magnitude, not an independent field).
+
+**The project's research question is now:** after removing every feature
+that directly defines, or is a derived transform of, that label, how much
+predictive signal is actually left in the object's other orbital and
+physical characteristics? Four controlled experiments (Original,
+Leakage-Aware, Physical/Kinematic-only, Orbital-only — see
+[`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md)) answer this with 5-fold
+cross-validation and a held-out test set; see
+[`docs/RESULTS.md`](docs/RESULTS.md) for the generated results. This
+project does not attempt to improve on, second-guess, or extend NASA/JPL's
+own hazard determination.
 
 ## Data source
 
@@ -59,17 +74,23 @@ src/data/validation.py   -> data/processed/neo_dataset.csv, validation_report.js
       |
       v
 src/features/engineering.py  (feature matrix built on demand by each consumer)
+src/features/feature_sets.py (Experiments A/B/C/D column lists + leakage checks;
+                               see docs/FEATURE_AUDIT.md)
       |
-      +----------------------------+
-      v                            v
-src/models/train.py        src/anomaly/detect.py
-      |                            |
-      v                            v
-model_registry/, results/    results/anomaly_scores.csv
-      |
-      v
-src/explainability/shap_analysis.py -> results/shap_*.json
-      |
+      +---------------------------------------------------+
+      v                            v                       v
+src/models/train.py        src/anomaly/detect.py   src/experiments/run_all.py
+(Experiment A / legacy)            |                (primary benchmark: 4 feature
+      |                            |                 sets x 4 models, 5-fold CV,
+      v                            v                 tuning, holdout, curves,
+model_registry/, results/    results/anomaly_scores.csv  error analysis, SHAP)
+      |                                                    |
+      v                                                    v
+src/explainability/shap_analysis.py -> results/shap_*.json  results/experiments/**
+      |                                                    |
+      |                                                    v
+      |                                       src/experiments/generate_report.py
+      |                                              -> docs/RESULTS.md
       v
 backend/main.py (FastAPI)  <-----  frontend/ (React + Vite + Tailwind)
 ```
@@ -116,6 +137,8 @@ might help a metric.
 
 ## Model training & evaluation
 
+### Experiment A (legacy, single feature set)
+
 ```bash
 python -m src.models.train
 python -m src.models.evaluate
@@ -123,11 +146,39 @@ python -m src.models.evaluate
 
 Trains `LogisticRegression`, `RandomForestClassifier`, and `XGBClassifier`
 inside leakage-safe `sklearn.Pipeline`s (preprocessing fit only on the
-training fold), on a fixed-seed 80/20 stratified split. Metrics
+training fold), on a fixed-seed 80/20 stratified split, using every
+feature including the two that directly define the target
+(`moid_au`, `absolute_magnitude_h` — see
+[`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md)). Metrics
 (accuracy/precision/recall/F1/ROC-AUC/PR-AUC/confusion matrix) are computed
 entirely via `sklearn.metrics` and written to `results/model_metrics.json`
 — never hand-typed. Full methodology, including class-imbalance handling:
 [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
+
+### Primary research benchmark (Experiments A-D)
+
+```bash
+python -m src.experiments.run_all
+python -m src.experiments.generate_report   # writes docs/RESULTS.md
+python -m src.experiments.integrity_checks  # verifies no leakage, reports status
+```
+
+Four controlled feature sets (`src/features/feature_sets.py`, reasoning in
+[`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md)) x four models (dummy
+baseline, logistic regression, random forest, XGBoost). For each
+combination: `RandomizedSearchCV` hyperparameter tuning inside a 5-fold
+`StratifiedKFold` on the training set only, per-fold and mean±std CV
+metrics, an untouched holdout test set, ROC/PR curves, a threshold
+sensitivity sweep (computed on out-of-fold CV predictions, never the test
+set), calibration (Brier score), permutation importance, and (for
+`random_forest`) SHAP. Every artifact is written under
+`results/experiments/<experiment>/<model>/` as a fixed set of JSON/CSV
+files (`cv_metrics.json`, `fold_metrics.json`, `test_metrics.json`,
+`confusion_matrix.json`, `roc_curve.json`, `pr_curve.json`,
+`threshold_analysis.json`, `calibration.json`, `error_analysis.json`,
+`feature_importance.json`, `predictions.csv`, `metadata.json`). Results:
+[`docs/RESULTS.md`](docs/RESULTS.md) (generated, not hand-typed — see
+above).
 
 ## Anomaly detection
 
@@ -164,6 +215,10 @@ uvicorn backend.main:app --reload
 | `GET /api/models` | registered model metadata |
 | `GET /api/models/{model}/metrics` | that model's real metrics, or `"unavailable"` |
 | `GET /api/features` | feature documentation (from `src/features/engineering.py`) |
+| `GET /api/feature-audit` | Category A-F feature classification (from `src/features/feature_sets.py`, mirrors `docs/FEATURE_AUDIT.md`) |
+| `GET /api/experiments` | status + summary metrics for every experiment x model combination |
+| `GET /api/experiments/{experiment}/{model}` | full CV/holdout/curve/error-analysis bundle for one combination, or `"unavailable"` |
+| `GET /api/reproducibility` | seed, fold count, feature sets, dataset provenance, reproduction commands |
 | `POST /api/predict` | run a trained model on user-supplied features; `503` if untrained |
 | `GET /api/limitations` | machine-readable scope statement |
 
@@ -176,10 +231,13 @@ and reports an explicit unavailable/404/503 state when they don't exist.
 cd frontend && npm install && npm run dev
 ```
 
-Minimal dashboard (Overview, Data Provenance, NEO Explorer, Model
-Performance, Limitations) that calls the backend above and renders its
-honest "Data unavailable" / "Not yet evaluated" states rather than any
-hardcoded figure.
+Research dashboard (Overview, Data Provenance, NEO Explorer, Feature
+Audit, Experiments comparison + per-experiment detail with real ROC/PR
+curves and confusion matrices, Experiment A [legacy], Reproducibility,
+Limitations) that calls the backend above and renders its honest "Data
+unavailable" / "Not yet executed" states rather than any hardcoded
+figure — see `src/experiments/integrity_checks.py::check_frontend_has_no_hardcoded_metrics`
+for the automated check backing that claim.
 
 ## Reproducibility
 
@@ -190,13 +248,18 @@ Full command sequence, seeding, and dataset-version tracking:
 
 ```bash
 python -m pytest tests/ -v
+python -m src.experiments.integrity_checks  # leakage + artifact + hardcoded-metric scan
 ```
 
-17 tests covering schema validation, cleaning/deduplication logic, feature
-formulas (exact-value assertions), and the backend's honest-failure
-behavior — using small, explicitly-labeled synthetic fixtures
-(`tests/fixtures/`) that are never treated as real data anywhere in the
-codebase or docs.
+47 tests covering schema validation, cleaning/deduplication logic, feature
+formulas (exact-value assertions), the backend's honest-failure behavior,
+the four experiments' feature-leakage exclusions
+(`tests/test_feature_sets.py`), and an end-to-end run of
+`src/experiments/run_all.py` on a small synthetic dataset
+(`tests/test_experiments.py`) — using small, explicitly-labeled synthetic
+fixtures/data (`tests/fixtures/`, and the fixture in
+`tests/test_experiments.py`) that are never treated as real data or a real
+benchmark anywhere in the codebase or docs.
 
 ## Limitations
 
@@ -206,9 +269,15 @@ any conclusion from this project, especially about what
 
 ## Results
 
-From the real run described in "Current status" above (500-object NeoWs
-sample, 80/20 stratified split, seed 42, 100-row test fold) — copied
-verbatim from `results/model_metrics.json` via the deploy log:
+**Primary results:** [`docs/RESULTS.md`](docs/RESULTS.md), generated by
+`python -m src.experiments.generate_report` from
+`results/experiments/**` — never hand-typed, and explicit about which
+experiment/model combinations have and haven't executed yet.
+
+**Experiment A (legacy, historical)** — from the real run described in
+"Current status" above (500-object NeoWs sample, 80/20 stratified split,
+seed 42, 100-row test fold), copied verbatim from
+`results/model_metrics.json` via the deploy log:
 
 | Model | Accuracy | Precision | Recall | F1 | ROC-AUC | PR-AUC |
 |---|---|---|---|---|---|---|
@@ -219,13 +288,15 @@ verbatim from `results/model_metrics.json` via the deploy log:
 The tree models' near-perfect scores are expected, not impressive: NASA's
 `is_potentially_hazardous_asteroid` flag is essentially a threshold rule
 over `moid_au` and `absolute_magnitude_h`, both of which are direct model
-inputs, so a tree model can recover that rule almost exactly. See
-[`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) for the full breakdown
-(confusion matrices, class balance) and
-[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md) for why this is "recovering
-a known rule," not "discovering hazard signal." Anomaly detection flagged
-63/500 (12.6%) objects in this sample as statistical outliers.
+inputs in this experiment, so a tree model can recover that rule almost
+exactly. See [`docs/FEATURE_AUDIT.md`](docs/FEATURE_AUDIT.md) for the full
+feature-by-feature leakage analysis this prompted, and
+[`docs/RESULTS.md`](docs/RESULTS.md) for Experiments B-D, which remove
+those features and ask how much signal is actually left. Anomaly
+detection flagged 63/500 (12.6%) objects in this sample as statistical
+outliers.
 
-Re-running `python -m src.models.train` against a different or larger
-ingestion will produce different real numbers — these are not fixed
-benchmarks, they describe one specific dataset snapshot.
+Re-running `python -m src.experiments.run_all` or `python -m src.models.train`
+against a different or larger ingestion will produce different real
+numbers — none of these are fixed benchmarks, they describe one specific
+dataset snapshot each.

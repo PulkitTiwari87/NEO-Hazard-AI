@@ -85,6 +85,18 @@ will report null percentages and record counts for the actual data
 retrieved — this file should be read before drawing any conclusion from
 model results.
 
+## On the leakage-aware research benchmark
+
+`docs/FEATURE_AUDIT.md` documents exactly which features directly define
+(or are a NASA-side derived transform of) `is_potentially_hazardous_asteroid`,
+and `docs/RESULTS.md` reports what happens to each model's performance once
+those features are removed (Experiments B-D). A performance *drop* between
+Experiment A and Experiments B-D is the expected, informative result, not
+a regression — it is the measurement this project exists to make. A
+leakage-audited experiment that still scores very highly is itself a
+finding worth investigating (see `docs/FEATURE_AUDIT.md`'s Category C
+features), not evidence to discard.
+
 ## On generalization
 
 Even with strong test-set metrics on this dataset, that says nothing about

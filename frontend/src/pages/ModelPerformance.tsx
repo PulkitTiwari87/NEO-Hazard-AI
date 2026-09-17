@@ -247,8 +247,10 @@ export function ModelPerformance() {
   const reference = registryByModel.random_forest ?? registryByModel.logistic_regression ?? registryByModel.xgboost
 
   return (
-    <div className="space-y-8">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Model performance</h2>
+    <div className="space-y-6">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
+        Experiment A — Original / Label-Defining Feature Experiment
+      </h2>
 
       {models?.status === 'unavailable' && !anyMetrics && (
         <UnavailableNotice detail="No trained models found. Run `python -m src.models.train`." />
@@ -373,7 +375,15 @@ export function ModelPerformance() {
           NASA/JPL's own hazard flag is essentially a threshold rule over those two quantities. Near-perfect
           tree-model scores mean the model recovered that known rule from its own inputs — not that it
           discovered new hazard signal. See <code className="rounded bg-black/30 px-1">docs/MODEL_CARD.md</code>{' '}
-          and <code className="rounded bg-black/30 px-1">docs/LIMITATIONS.md</code>.
+          and <code className="rounded bg-black/30 px-1">docs/LIMITATIONS.md</code>, or the full{' '}
+          <a href="/feature-audit" className="underline hover:text-amber-100">
+            Feature Audit
+          </a>{' '}
+          and leakage-audited{' '}
+          <a href="/experiments" className="underline hover:text-amber-100">
+            Experiments
+          </a>{' '}
+          (the primary research view) for what remains once these features are removed.
         </div>
       )}
 

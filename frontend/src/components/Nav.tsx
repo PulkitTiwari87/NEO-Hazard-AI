@@ -4,7 +4,10 @@ const links = [
   { to: '/', label: 'Overview' },
   { to: '/data', label: 'Data Provenance' },
   { to: '/explorer', label: 'NEO Explorer' },
-  { to: '/models', label: 'Model Performance' },
+  { to: '/feature-audit', label: 'Feature Audit' },
+  { to: '/experiments', label: 'Experiments' },
+  { to: '/original-experiment', label: 'Experiment A (Original)' },
+  { to: '/reproducibility', label: 'Reproducibility' },
   { to: '/limitations', label: 'Limitations' },
 ]
 
