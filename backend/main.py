@@ -24,6 +24,7 @@ from src.config import MODEL_METRICS_PATH, PROCESSED_DATASET_PATH, VALIDATION_RE
 SHAP_IMPORTANCE_PATH = settings.results_path / "shap_global_importance.json"
 EXPERIMENTS_INDEX_PATH = settings.results_path / "experiments" / "index.json"
 ANOMALY_ANALYSIS_PATH = settings.results_path / "anomaly_analysis.json"
+ANOMALY_SCORES_PATH = settings.results_path / "anomaly_scores.csv"
 MAX_FULL_DATASET_ROWS = 2000
 from src.features.engineering import (
     ALL_NUMERIC_FEATURES,
@@ -288,6 +289,21 @@ def get_neo(neo_id: str) -> dict[str, Any]:
     return _records_json_safe(match.iloc[[0]])[0]
 
 
+@app.get("/api/neo/{neo_id}/anomaly")
+def get_neo_anomaly(neo_id: str) -> dict[str, Any]:
+    if not ANOMALY_SCORES_PATH.exists():
+        return {
+            "status": "unavailable",
+            "detail": "Anomaly detection has not been run yet. Run `python -m src.anomaly.detect`.",
+        }
+    scores_df = pd.read_csv(ANOMALY_SCORES_PATH)
+    match = scores_df[scores_df["neo_id"].astype(str) == str(neo_id)]
+    if match.empty:
+        return {"status": "unavailable", "detail": f"No anomaly score recorded for NEO '{neo_id}'."}
+    record = _records_json_safe(match.iloc[[0]])[0]
+    return {"status": "ok", **record}
+
+
 @app.get("/api/models")
 def list_models() -> dict[str, Any]:
     names = list_registered_models()
@@ -439,7 +455,17 @@ def experiment_explainability(experiment_id: str, model_name: str) -> dict[str, 
     ]
     local_examples = None
     if local_path.exists():
-        local_examples = json.loads(local_path.read_text()).get("examples")
+        raw_examples = json.loads(local_path.read_text()).get("examples") or []
+        local_examples = [
+            {
+                "neo_id": example["neo_id"],
+                "top_contributing_features": [
+                    {"feature": _strip_prefix(f["feature"]), "shap_value": f["shap_value"]}
+                    for f in example["top_contributing_features"]
+                ],
+            }
+            for example in raw_examples
+        ]
     return {
         "status": "ok",
         "experiment_id": experiment_id,

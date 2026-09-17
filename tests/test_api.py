@@ -126,3 +126,9 @@ def test_anomalies_reports_unavailable_without_run():
     response = client.get("/api/anomalies")
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
+
+
+def test_neo_anomaly_reports_unavailable_without_run():
+    response = client.get("/api/neo/does-not-exist/anomaly")
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"

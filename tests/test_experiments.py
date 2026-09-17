@@ -72,6 +72,29 @@ def test_compute_error_analysis_counts_sum_to_holdout_rows():
     assert len(result["false_positives"]) + len(result["false_negatives"]) == 1
 
 
+def test_compute_error_analysis_group_feature_means_are_computed_per_category():
+    df = make_synthetic_processed_dataset(n_per_class=5).reset_index(drop=True)
+    y_true = df["is_potentially_hazardous_asteroid"].to_numpy()
+    y_pred = y_true.copy()
+    y_pred[0] = not y_pred[0]
+    result = run_all_module.compute_error_analysis(
+        df,
+        ["moid_au", "absolute_magnitude_h"],
+        y_true,
+        y_pred,
+        None,
+        "test_experiment",
+        "test_model",
+        numeric_feature_columns=["moid_au", "absolute_magnitude_h"],
+    )
+    means = result["group_feature_means"]
+    assert set(means.keys()) == {"true_positive", "true_negative", "false_positive", "false_negative"}
+    non_empty_groups = [g for g in means.values() if g]
+    assert len(non_empty_groups) > 0
+    for group in non_empty_groups:
+        assert set(group.keys()) <= {"moid_au", "absolute_magnitude_h"}
+
+
 def test_compute_error_analysis_reports_no_false_negatives_explicitly():
     import numpy as np
 

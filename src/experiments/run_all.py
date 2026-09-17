@@ -241,6 +241,7 @@ def compute_error_analysis(
     y_proba,
     experiment_id: str,
     model_name: str,
+    numeric_feature_columns: list[str] | None = None,
 ) -> dict:
     y_true = np.asarray(y_true).astype(bool)
     y_pred = np.asarray(y_pred).astype(bool)
@@ -265,6 +266,17 @@ def compute_error_analysis(
             )
         return records
 
+    def _group_feature_means(mask: np.ndarray) -> dict:
+        if numeric_feature_columns is None or int(mask.sum()) == 0:
+            return {}
+        subset = df_holdout.iloc[np.where(mask)[0]]
+        means = {}
+        for col in numeric_feature_columns:
+            if col in subset.columns:
+                value = subset[col].mean()
+                means[col] = _native(value) if pd.notna(value) else None
+        return means
+
     fn_count = int(fn_mask.sum())
     return {
         "experiment_id": experiment_id,
@@ -279,6 +291,18 @@ def compute_error_analysis(
         "false_positives": _records(fp_mask),
         "false_negatives": _records(fn_mask),
         "false_negative_note": "No false negatives in this evaluated split." if fn_count == 0 else None,
+        "group_feature_means": {
+            "true_positive": _group_feature_means(tp_mask),
+            "true_negative": _group_feature_means(tn_mask),
+            "false_positive": _group_feature_means(fp_mask),
+            "false_negative": _group_feature_means(fn_mask),
+        },
+        "group_feature_means_note": (
+            "Mean of each numeric feature within each confusion-matrix category, computed from the same "
+            "holdout split. Useful for comparing false positives against true negatives (and false "
+            "negatives against true positives) to see which feature ranges errors are concentrated in — "
+            "a difference in means does not by itself establish which feature caused a misclassification."
+        ),
     }
 
 
@@ -313,7 +337,14 @@ def run_experiment_model(df: pd.DataFrame, experiment_id: str, model_name: str, 
     holdout_metrics = compute_classification_metrics(y_holdout, y_holdout_pred, y_holdout_proba)
     calibration = compute_calibration(y_holdout.to_numpy(), y_holdout_proba)
     error_analysis = compute_error_analysis(
-        holdout_df, feature_columns, y_holdout.to_numpy(), y_holdout_pred, y_holdout_proba, experiment_id, model_name
+        holdout_df,
+        feature_columns,
+        y_holdout.to_numpy(),
+        y_holdout_pred,
+        y_holdout_proba,
+        experiment_id,
+        model_name,
+        numeric_feature_columns=numeric_features,
     )
 
     trained_at = datetime.now(timezone.utc).isoformat()

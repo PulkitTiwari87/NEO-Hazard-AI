@@ -2,9 +2,15 @@ import { NavLink } from 'react-router-dom'
 
 const links = [
   { to: '/', label: 'Overview' },
-  { to: '/data', label: 'Data Provenance' },
+  { to: '/dataset', label: 'Dataset' },
+  { to: '/explore', label: 'Explore' },
+  { to: '/experiments', label: 'Experiments' },
+  { to: '/models', label: 'Models' },
+  { to: '/explainability', label: 'Explainability' },
+  { to: '/errors', label: 'Errors' },
+  { to: '/anomalies', label: 'Anomalies' },
   { to: '/explorer', label: 'NEO Explorer' },
-  { to: '/models', label: 'Model Performance' },
+  { to: '/methodology', label: 'Methodology' },
   { to: '/limitations', label: 'Limitations' },
 ]
 
@@ -13,13 +19,14 @@ export function Nav() {
     <header className="border-b border-white/10 bg-[#070b14]">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
         <span className="text-sm font-semibold tracking-wide text-slate-100">
-          NEO-Hazard-AI <span className="text-slate-500">— research ML pipeline</span>
+          NEO-Hazard-AI <span className="text-slate-500">— research laboratory</span>
         </span>
         <nav className="flex flex-wrap gap-1 text-sm">
           {links.map((link) => (
             <NavLink
               key={link.to}
               to={link.to}
+              end={link.to === '/'}
               className={({ isActive }) =>
                 `rounded-md px-3 py-1.5 transition-colors ${
                   isActive ? 'bg-sky-500/15 text-sky-300' : 'text-slate-400 hover:text-slate-100'
