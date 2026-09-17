@@ -20,6 +20,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from src.config import MODEL_METRICS_PATH, PROCESSED_DATASET_PATH, settings
+
+SHAP_IMPORTANCE_PATH = settings.results_path / "shap_global_importance.json"
 from src.features.engineering import (
     ALL_NUMERIC_FEATURES,
     CATEGORICAL_FEATURES,
@@ -162,6 +164,37 @@ def model_metrics(model_name: str) -> dict[str, Any]:
     if model_name not in all_metrics:
         raise HTTPException(status_code=404, detail=f"No metrics found for model '{model_name}'.")
     return {"status": "ok", "model": model_name, "metrics": all_metrics[model_name]}
+
+
+@app.get("/api/models/{model_name}/explainability")
+def model_explainability(model_name: str) -> dict[str, Any]:
+    if not SHAP_IMPORTANCE_PATH.exists():
+        return {
+            "status": "unavailable",
+            "detail": (
+                "SHAP explainability has not been generated. Run "
+                "`python -m src.explainability.shap_analysis --model <name>`."
+            ),
+        }
+    payload = json.loads(SHAP_IMPORTANCE_PATH.read_text())
+    if payload.get("model") != model_name:
+        return {
+            "status": "unavailable",
+            "detail": (
+                f"SHAP explainability was generated for model "
+                f"'{payload.get('model')}', not '{model_name}'."
+            ),
+        }
+    def _strip_prefix(name: str) -> str:
+        return name.split("__", 1)[1] if "__" in name else name
+
+    importance = [
+        {"feature": _strip_prefix(name), "mean_abs_shap": value}
+        for name, value in sorted(
+            payload["mean_abs_shap_by_feature"].items(), key=lambda pair: pair[1], reverse=True
+        )
+    ]
+    return {"status": "ok", "model": model_name, "global_importance": importance}
 
 
 @app.get("/api/features")

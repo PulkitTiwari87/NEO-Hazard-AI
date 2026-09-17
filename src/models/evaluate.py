@@ -20,9 +20,11 @@ from sklearn.metrics import (
     average_precision_score,
     confusion_matrix,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
+    roc_curve,
 )
 from sklearn.model_selection import train_test_split
 
@@ -52,9 +54,15 @@ def compute_classification_metrics(y_true, y_pred, y_proba=None) -> dict:
     if y_proba is not None and len(np.unique(y_true)) > 1:
         metrics["roc_auc"] = float(roc_auc_score(y_true, y_proba))
         metrics["pr_auc"] = float(average_precision_score(y_true, y_proba))
+        fpr, tpr, _ = roc_curve(y_true, y_proba)
+        precision, recall, _ = precision_recall_curve(y_true, y_proba)
+        metrics["roc_curve"] = {"fpr": fpr.tolist(), "tpr": tpr.tolist()}
+        metrics["pr_curve"] = {"precision": precision.tolist(), "recall": recall.tolist()}
     else:
         metrics["roc_auc"] = None
         metrics["pr_auc"] = None
+        metrics["roc_curve"] = None
+        metrics["pr_curve"] = None
     return metrics
 
 
@@ -79,6 +87,12 @@ def evaluate_all_registered_models() -> dict:
     all_metrics = {}
     for name in model_names:
         metadata = load_metadata(name)
+        if "test_size" not in metadata:
+            # Not a classifier trained by src.models.train (e.g. the
+            # unsupervised isolation_forest registered by src.anomaly.detect,
+            # which uses a different metadata schema) — nothing to evaluate here.
+            logger.info("Skipping '%s': not a classification model.", name)
+            continue
         pipeline = load_model(name)
         _, x_test, _, y_test = reproduce_test_split(
             random_seed=metadata["random_seed"], test_size=metadata["test_size"]

@@ -57,6 +57,14 @@ def test_features_endpoint_lists_documented_definitions():
     assert len(body["derived_features"]) > 0
 
 
+def test_explainability_reports_unavailable_without_shap_run():
+    response = client.get("/api/models/random_forest/explainability")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "unavailable"
+    assert "detail" in body
+
+
 def test_limitations_endpoint_is_explicit_about_scope():
     response = client.get("/api/limitations")
     assert response.status_code == 200

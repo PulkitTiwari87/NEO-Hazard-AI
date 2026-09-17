@@ -42,16 +42,55 @@ export interface NeoListResponse {
   results: Record<string, unknown>[]
 }
 
+export interface ModelRegistryEntry {
+  model_name: string
+  model_version: string
+  trained_at_utc: string
+  dataset_path: string
+  dataset_row_count: number
+  feature_columns: string[]
+  categorical_features: string[]
+  numeric_features: string[]
+  target_column: string
+  random_seed: number
+  test_size: number
+  hyperparameters: Record<string, string>
+}
+
 export interface ModelsResponse {
   status: 'ok' | 'unavailable'
-  models: Record<string, unknown>[]
+  models: ModelRegistryEntry[]
+}
+
+export interface ConfusionMatrix {
+  labels: [string, string]
+  matrix: [[number, number], [number, number]]
+}
+
+export interface ClassificationMetrics {
+  accuracy: number
+  precision: number
+  recall: number
+  f1: number
+  confusion_matrix: ConfusionMatrix
+  roc_auc: number | null
+  pr_auc: number | null
+  roc_curve: { fpr: number[]; tpr: number[] } | null
+  pr_curve: { precision: number[]; recall: number[] } | null
 }
 
 export interface ModelMetricsResponse {
   status: 'ok' | 'unavailable'
   detail?: string
   model?: string
-  metrics?: Record<string, unknown>
+  metrics?: ClassificationMetrics
+}
+
+export interface ExplainabilityResponse {
+  status: 'ok' | 'unavailable'
+  detail?: string
+  model?: string
+  global_importance?: { feature: string; mean_abs_shap: number }[]
 }
 
 export interface FeaturesResponse {
@@ -88,6 +127,8 @@ export const api = {
   },
   models: () => getJson<ModelsResponse>('/models'),
   modelMetrics: (modelName: string) => getJson<ModelMetricsResponse>(`/models/${modelName}/metrics`),
+  modelExplainability: (modelName: string) =>
+    getJson<ExplainabilityResponse>(`/models/${modelName}/explainability`),
   features: () => getJson<FeaturesResponse>('/features'),
   limitations: () => getJson<LimitationsResponse>('/limitations'),
 }
