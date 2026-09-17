@@ -52,6 +52,15 @@ values below are picked.
 | `log_closest_relative_velocity_km_s` | `log1p(closest_relative_velocity_km_s)` | `closest_relative_velocity_km_s` | log(1+km/s) | Same right-skew rationale as above. |
 | `log_orbital_period_days` | `log1p(orbital_period_days)` | `orbital_period_days` | log(1+days) | Orbital periods range from under a year (Aten/Atira-class objects) to centuries; log-scaling reduces skew for the linear model. |
 
+## Leakage-aware exclusion (Experiment B)
+
+`src/features/engineering.py::EXPERIMENTS["experiment_b_leakage_aware"]`
+trains every model a second time with `moid_au` and `absolute_magnitude_h`
+excluded from the feature set above — NASA/JPL's own PHA screening rule is
+approximately a threshold function of exactly those two fields, so
+including them lets a model recover that rule rather than demonstrate
+independent signal. See `docs/METHODOLOGY.md` and `docs/LIMITATIONS.md`.
+
 ## Features deliberately *not* included
 
 No combined/ratio features (e.g. velocity ÷ MOID) were added. Per the

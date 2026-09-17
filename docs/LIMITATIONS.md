@@ -65,6 +65,26 @@ row*, relative to the model's average prediction over the explained
 sample. They explain the model's behavior. They are not a causal
 explanation of orbital dynamics and are never attributed to NASA.
 
+## On Experiment B ("leakage-aware")
+
+Experiment B removes `moid_au` and `absolute_magnitude_h` to test whether
+the *remaining* features carry independent signal about NASA/JPL's
+screening label. A lower score for Experiment B is not the model "failing"
+— it answers a deliberately narrower and harder question. It is also not
+evidence that MOID and absolute magnitude are unimportant to the real PHA
+screening criterion; they were excluded specifically *because* they define
+that criterion, not because they are uninformative.
+
+## On threshold and calibration analysis
+
+The threshold-sweep and calibration curves in the research dashboard are
+computed from cross-validation probabilities on the training pool (never
+the holdout test set), or from the holdout set only for the final
+calibration display — see `docs/METHODOLOGY.md`. Moving the decision
+threshold changes precision/recall trade-offs on *this dataset snapshot*;
+it is not a recommendation for an operational decision threshold, and no
+threshold shown was chosen to maximize a reported holdout metric.
+
 ## On the prediction API
 
 `/api/predict` returns an ML model's output on user-supplied feature

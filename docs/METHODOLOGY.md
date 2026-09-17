@@ -103,3 +103,51 @@ SHAP `TreeExplainer` on the trained tree model (default: `random_forest`),
 producing global mean-|SHAP| feature importance and per-row local
 contribution examples (`src/explainability/shap_analysis.py`). SHAP values
 describe the model's behavior, not a physical causal mechanism.
+
+## Two-experiment research pipeline
+
+`src/experiments/run_all.py` (`python -m src.experiments.run_all`) is the
+project's main research entry point, run in addition to (not instead of)
+`src/models/train.py`/`evaluate.py`. It runs every model against two
+feature sets, defined once in `src/features/engineering.py::EXPERIMENTS`:
+
+- **Experiment A — original feature set.** Every NASA-provided and derived
+  feature, including `moid_au` and `absolute_magnitude_h`.
+- **Experiment B — leakage-aware feature set.** Identical in every other
+  respect, but excludes `moid_au` and `absolute_magnitude_h` — the two
+  quantities NASA/JPL's own `is_potentially_hazardous_asteroid` rule is
+  (per NASA's public documentation) approximately a threshold function of.
+  Including them lets a model recover that known rule rather than
+  demonstrate independent predictive signal from the object's other
+  features; Experiment B tests for that signal directly. It is a narrower
+  question than Experiment A, not automatically a "better" experiment —
+  see `docs/LIMITATIONS.md`.
+
+For each (experiment, model) pair, `run_experiment_model()`:
+
+1. Takes one stratified 80/20 train/holdout split (fixed seed). The
+   holdout fold is used exactly once, for the final reported metrics.
+2. Runs `StratifiedKFold(5, shuffle=True)` cross-validation **within the
+   training pool only** — a fresh pipeline (preprocessing included) is fit
+   per fold, so no fold's statistics leak into another, and the holdout
+   fold is never touched here. Reports real per-fold accuracy/precision/
+   recall/F1/ROC-AUC/PR-AUC and confusion matrices, plus mean ± std.
+3. Sweeps decision thresholds (0.05–0.95) against the **out-of-fold CV
+   probabilities** collected in step 2 — never the holdout set — reporting
+   precision/recall/F1 at each threshold. This keeps threshold exploration
+   from contaminating the final test metric.
+4. Fits a final pipeline on the whole training pool and evaluates it once
+   on the untouched holdout fold.
+5. Computes a calibration curve (`sklearn.calibration.calibration_curve`,
+   quantile-binned, falling back to uniform bins if quantiles collapse) and
+   Brier score from the holdout probabilities.
+6. Extracts every false-positive/false-negative holdout record (full
+   feature values, true/predicted label, predicted probability) plus the
+   mean of each numeric feature within each of the four confusion-matrix
+   categories (TP/TN/FP/FN), for comparing e.g. false positives against
+   true negatives.
+
+Results are written to `results/experiments/<experiment_id>/<model_name>/`
+(`holdout.json`, `cv.json`, `threshold.json`, `calibration.json`,
+`errors.json`) and summarized in `results/experiments/index.json`. Trained
+pipelines are registered under `model_registry/<experiment_id>/<model_name>/`.

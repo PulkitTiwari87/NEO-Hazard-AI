@@ -58,20 +58,27 @@ src/data/ingestion.py    -> data/raw/*.json (+ retrieval metadata)
 src/data/validation.py   -> data/processed/neo_dataset.csv, validation_report.json
       |
       v
-src/features/engineering.py  (feature matrix built on demand by each consumer)
+src/features/engineering.py  (feature matrix + EXPERIMENTS: Experiment A/B feature sets)
       |
-      +----------------------------+
-      v                            v
-src/models/train.py        src/anomaly/detect.py
-      |                            |
-      v                            v
-model_registry/, results/    results/anomaly_scores.csv
+      +--------------------+------------------------------+
+      v                    v                              v
+src/models/train.py   src/experiments/run_all.py     src/anomaly/detect.py
+(single-experiment,        (both experiments x 3 models:       |
+ used by /api/predict)      CV, holdout, threshold,             v
+      |                     calibration, error analysis)  results/anomaly_scores.csv,
+      v                          |                         results/anomaly_analysis.json
+model_registry/,                 v
+results/model_metrics.json  model_registry/<experiment>/<model>/,
+      |                     results/experiments/<experiment>/<model>/*.json,
+      |                     results/experiments/index.json
+      |                          |
+      +--------------------------+
+                  |
+                  v
+src/explainability/shap_analysis.py -> results/shap_*.json (legacy + per-experiment)
       |
       v
-src/explainability/shap_analysis.py -> results/shap_*.json
-      |
-      v
-backend/main.py (FastAPI)  <-----  frontend/ (React + Vite + Tailwind)
+backend/main.py (FastAPI)  <-----  frontend/ (React + Vite + Tailwind — research dashboard)
 ```
 
 ## Installation
@@ -129,6 +136,23 @@ entirely via `sklearn.metrics` and written to `results/model_metrics.json`
 — never hand-typed. Full methodology, including class-imbalance handling:
 [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
+## Two-experiment research pipeline
+
+```bash
+python -m src.experiments.run_all
+```
+
+The project's main research entry point (run in addition to
+`train`/`evaluate` above). For **Experiment A** (original feature set) and
+**Experiment B** (leakage-aware — excludes `moid_au`/`absolute_magnitude_h`)
+x each of the 3 models, computes real 5-fold stratified cross-validation
+(fold-level metrics + confusion matrices), a threshold sweep from
+out-of-fold CV probabilities, a calibration curve + Brier score, and full
+false-positive/false-negative error-analysis records — all from an
+untouched holdout split. See
+[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md#two-experiment-research-pipeline)
+for exactly what each artifact contains and why Experiment B exists.
+
 ## Anomaly detection
 
 ```bash
@@ -137,16 +161,21 @@ python -m src.anomaly.detect
 
 Unsupervised `IsolationForest` over the engineered feature space, labeled
 throughout as an **"ML anomaly score"** — explicitly not a hazard score.
-See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
+Also writes a score distribution and top-anomaly feature profiles to
+`results/anomaly_analysis.json`. See [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 
 ## Explainability
 
 ```bash
 python -m src.explainability.shap_analysis --model random_forest
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_a_original
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_b_leakage_aware
 ```
 
 SHAP `TreeExplainer` global feature importance and per-row local
-explanations for a trained tree model.
+explanations for a trained tree model (`random_forest` or `xgboost` —
+`TreeExplainer` doesn't support the logistic regression baseline), scoped
+either to the legacy single-experiment model or a specific experiment's.
 
 ## Backend API
 
@@ -163,9 +192,22 @@ uvicorn backend.main:app --reload
 | `GET /api/neo/{id}` | single NEO record |
 | `GET /api/models` | registered model metadata |
 | `GET /api/models/{model}/metrics` | that model's real metrics, or `"unavailable"` |
+| `GET /api/models/{model}/explainability` | legacy single-experiment SHAP importance |
 | `GET /api/features` | feature documentation (from `src/features/engineering.py`) |
 | `POST /api/predict` | run a trained model on user-supplied features; `503` if untrained |
 | `GET /api/limitations` | machine-readable scope statement |
+| `GET /api/dataset/quality` | missing values, class distribution, ranges, cleaning report |
+| `GET /api/dataset/correlations` | Pearson/Spearman correlation matrix over numeric features |
+| `GET /api/dataset/full` | capped, NaN-safe processed rows for EDA (sampled beyond the cap) |
+| `GET /api/experiments` | Experiment A/B definitions + model comparison table |
+| `GET /api/experiments/{experiment}/models/{model}/holdout` | holdout metrics + ROC/PR curves |
+| `GET /api/experiments/{experiment}/models/{model}/cv` | 5-fold CV fold-level metrics + mean/std |
+| `GET /api/experiments/{experiment}/models/{model}/threshold` | threshold sweep (out-of-fold CV probabilities) |
+| `GET /api/experiments/{experiment}/models/{model}/calibration` | calibration curve + Brier score |
+| `GET /api/experiments/{experiment}/models/{model}/errors` | FP/FN records + per-category feature means |
+| `GET /api/experiments/{experiment}/models/{model}/explainability` | per-experiment SHAP global + local |
+| `GET /api/anomalies` | anomaly score distribution + top-N anomalous records |
+| `GET /api/neo/{id}/anomaly` | one record's anomaly score, if computed |
 
 No endpoint returns a hardcoded number; each reads real on-disk artifacts
 and reports an explicit unavailable/404/503 state when they don't exist.
@@ -176,10 +218,15 @@ and reports an explicit unavailable/404/503 state when they don't exist.
 cd frontend && npm install && npm run dev
 ```
 
-Minimal dashboard (Overview, Data Provenance, NEO Explorer, Model
-Performance, Limitations) that calls the backend above and renders its
-honest "Data unavailable" / "Not yet evaluated" states rather than any
-hardcoded figure.
+An 11-page research dashboard — Overview, Dataset & Data Quality,
+Exploratory Analysis (distributions, correlation matrix, bivariate, target
+analysis), Experiment Comparison, Model Performance (cross-validation,
+confusion matrix lab, ROC/PR, threshold analysis, calibration), Feature
+Importance & SHAP, Error Analysis, Anomaly Detection, NEO Explorer (with
+schema-derived filters), an individual NEO research profile, and
+Methodology/Reproducibility/Research Report — that calls the backend above
+and renders its honest "Data unavailable" / "Result not available" states
+rather than any hardcoded figure.
 
 ## Reproducibility
 
@@ -192,11 +239,14 @@ Full command sequence, seeding, and dataset-version tracking:
 python -m pytest tests/ -v
 ```
 
-17 tests covering schema validation, cleaning/deduplication logic, feature
-formulas (exact-value assertions), and the backend's honest-failure
-behavior — using small, explicitly-labeled synthetic fixtures
-(`tests/fixtures/`) that are never treated as real data anywhere in the
-codebase or docs.
+41 tests covering schema validation, cleaning/deduplication logic, feature
+formulas (exact-value assertions), the two-experiment pipeline (cross-
+validation, threshold sweep, calibration, error analysis — including a
+regression test that Experiment A actually outperforms Experiment B when
+the label is a synthetic rule over the features Experiment B excludes),
+anomaly-analysis construction, and the backend's honest-failure behavior —
+using small, explicitly-labeled synthetic fixtures (`tests/fixtures/`) that
+are never treated as real data anywhere in the codebase or docs.
 
 ## Limitations
 
@@ -229,3 +279,12 @@ a known rule," not "discovering hazard signal." Anomaly detection flagged
 Re-running `python -m src.models.train` against a different or larger
 ingestion will produce different real numbers — these are not fixed
 benchmarks, they describe one specific dataset snapshot.
+
+These specific numbers above are from Experiment A (the original feature
+set) — the only experiment that had been run against real data as of this
+run. `python -m src.experiments.run_all` (added since) has not yet been
+run against a real ingestion in this environment; once it is, its
+Experiment B numbers, cross-validation results, and everything else the
+research dashboard displays will populate the same way, from real
+`results/experiments/*.json` artifacts — see
+[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md#two-experiment-research-pipeline).

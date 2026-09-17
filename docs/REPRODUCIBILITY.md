@@ -16,14 +16,24 @@ python -m src.data.ingestion          # -> data/raw/neows_browse_<timestamp>.jso
 python -m src.data.validation         # -> data/processed/neo_dataset.csv, validation_report.json
 python -m src.models.train            # -> model_registry/<model>/{model.joblib,metadata.json}, results/model_metrics.json, results/experiment_metadata.json
 python -m src.models.evaluate         # -> re-derives the same split and regenerates results/model_metrics.json, as a check
-python -m src.anomaly.detect          # -> results/anomaly_scores.csv, model_registry/isolation_forest/
+python -m src.experiments.run_all     # -> results/experiments/<experiment>/<model>/*.json, results/experiments/index.json, model_registry/<experiment>/<model>/
+python -m src.anomaly.detect          # -> results/anomaly_scores.csv, results/anomaly_analysis.json, model_registry/isolation_forest/
 python -m src.explainability.shap_analysis --model random_forest   # -> results/shap_global_importance.json, results/shap_local_examples.json
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_a_original
+python -m src.explainability.shap_analysis --model random_forest --experiment experiment_b_leakage_aware
 ```
+
+`src.experiments.run_all` is the research dashboard's main data source
+(cross-validation, threshold analysis, calibration, error analysis, and the
+Experiment A/B comparison); `src.models.train`/`evaluate` remain the
+simpler single-experiment path used by `/api/predict`'s default models.
+SHAP's `TreeExplainer` only supports tree models, so only `random_forest`/
+`xgboost` (not `logistic_regression`) can be passed to `--model`.
 
 Each stage fails with a clear exception (never a fabricated fallback) if
 its required input from the previous stage is missing — see the module
-docstrings in `src/data/`, `src/models/`, `src/anomaly/`, and
-`src/explainability/`.
+docstrings in `src/data/`, `src/models/`, `src/experiments/`,
+`src/anomaly/`, and `src/explainability/`.
 
 ## Backend
 
@@ -78,6 +88,10 @@ Every processed run records:
 - `data/processed/validation_report.json.validated_at_utc` — when validation ran
 - `model_registry/<model>/metadata.json.dataset_path` and `.dataset_row_count`
 - `results/experiment_metadata.json` — full training run configuration
+- `results/experiments/index.json` — dataset row count, random seed, CV
+  fold count, split strategy, and generation timestamp for the two-experiment
+  pipeline; `results/experiments/<experiment>/<model>/*.json` each repeat
+  the experiment/model identifiers they were generated for
 
 so any published metric can be traced back to the exact raw ingestion file
 and pipeline run that produced it.
