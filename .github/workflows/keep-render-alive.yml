@@ -1,0 +1,35 @@
+name: Keep Render deploy alive during benchmark run
+
+# Manual-trigger-only utility, not part of CI. The free-tier
+# neo-hazard-ai-backend Render service spins down after 15 minutes with no
+# inbound HTTP traffic, which kills the in-progress
+# `python -m src.experiments.run_all` background job (results/experiments/**
+# lives only on that instance's ephemeral disk, so a restart loses all
+# progress — see docs/REPRODUCIBILITY.md). This workflow just pings the
+# service's health endpoint on a schedule tight enough to keep it awake
+# for the benchmark's duration, run from GitHub's own network so it isn't
+# subject to any sandboxed session's egress restrictions. Safe to delete
+# once a benchmark run has completed and been fetched.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Total minutes to keep pinging"
+        required: false
+        default: "120"
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: Ping health endpoint every 5 minutes
+        run: |
+          total=${{ github.event.inputs.minutes || 120 }}
+          iterations=$(( total / 5 ))
+          for i in $(seq 1 "$iterations"); do
+            echo "ping $i/$iterations"
+            curl -sS -m 20 https://neo-hazard-ai-backend.onrender.com/api/health || echo "ping failed, continuing"
+            sleep 300
+          done
