@@ -1,5 +1,14 @@
 # Methodology
 
+**This file describes two methodologies.** "Legacy (Experiment A)" below
+is the original single-feature-set pipeline (`src/models/train.py`),
+kept for historical reproducibility. "Primary research benchmark" (its
+own section further down) is the leakage-audited comparison across four
+feature sets (`src/experiments/run_all.py`) — see `docs/FEATURE_AUDIT.md`
+for why that exists and `docs/RESULTS.md` for its output.
+
+## Legacy (Experiment A) methodology
+
 ## Task definition
 
 Binary classification: given real orbital, physical, and close-approach
@@ -103,3 +112,89 @@ SHAP `TreeExplainer` on the trained tree model (default: `random_forest`),
 producing global mean-|SHAP| feature importance and per-row local
 contribution examples (`src/explainability/shap_analysis.py`). SHAP values
 describe the model's behavior, not a physical causal mechanism.
+
+## Primary research benchmark methodology
+
+`src/experiments/run_all.py`. Row grain, close-approach selection, and
+class-imbalance handling are identical to the legacy methodology above
+(same underlying dataset, same object-level grain). Everything below is
+what's different.
+
+### Feature sets
+
+Four, defined in `src/features/feature_sets.py` and reasoned about
+feature-by-feature in `docs/FEATURE_AUDIT.md`: Original (unchanged),
+Leakage-Aware (excludes `moid_au`, `absolute_magnitude_h`, and the
+NASA-side-derived diameter fields), Physical/Kinematic-only, and
+Orbital-only.
+
+### Split structure
+
+```
+real data
+   |
+   +-- outer holdout test set (20%, stratified, fixed seed) -- UNTOUCHED
+   |   until final evaluation: never used for tuning, feature selection,
+   |   or threshold selection.
+   |
+   +-- training set (80%)
+          |
+          +-- 5-fold StratifiedKFold (shuffle=True, fixed seed)
+                 |
+                 +-- RandomizedSearchCV hyperparameter tuning (scoring="f1")
+```
+
+`src/experiments/splits.py::verify_object_level_grain` re-checks the
+one-row-per-object precondition at run time before choosing a plain
+`StratifiedKFold` over a grouped split — see that module's docstring.
+
+After `RandomizedSearchCV` selects hyperparameters via its own internal
+CV, the same 5-fold split is re-run once more with those fixed
+hyperparameters (`src/experiments/run_all.py::_run_cv_folds`) purely to
+report the full metric suite (accuracy/precision/recall/F1/ROC-AUC/PR-AUC)
+per fold — `RandomizedSearchCV` itself only tracks the scoring metric
+used for selection (F1), not the full suite, so this second pass is what
+the fold-level tables in `docs/RESULTS.md` come from.
+
+### Models
+
+Same three as the legacy pipeline, plus `DummyClassifier(strategy="most_frequent")`
+as an explicit baseline (`src/experiments/tuning.py::build_estimators`).
+
+### Hyperparameter tuning
+
+`RandomizedSearchCV`, `n_iter=12` (or the full grid size if smaller),
+scored by F1 on the training-fold CV splits only — the outer holdout is
+never passed into `src/experiments/tuning.py`. Search spaces
+(`PARAM_DISTRIBUTIONS`) are small, standard ranges for each model family,
+chosen before seeing any result and never widened to chase a score.
+
+### Threshold analysis
+
+`src/experiments/metrics.py::threshold_sweep` is evaluated only against
+out-of-fold CV predictions (`oof_proba` in `run_all.py`), never the
+holdout test set — the holdout is always scored at the model's default
+0.5 threshold. This is a deliberate leakage boundary: selecting a
+threshold based on holdout performance would make the holdout metric an
+overly optimistic estimate of real-world performance.
+
+### Error analysis, importance, and calibration
+
+`src/experiments/error_analysis.py` builds a per-row TP/TN/FP/FN table
+from the holdout test set only, plus per-outcome feature-distribution
+summaries (means/medians/std — no causal claim beyond what the numbers
+show). Permutation importance (`sklearn.inspection.permutation_importance`,
+`n_repeats=20`) and model-specific importance/coefficients are computed
+against the holdout set; SHAP (`TreeExplainer`) is generated for
+`random_forest` only, per experiment, to keep runtime bounded — see
+`src/experiments/run_all.py::RUN_SHAP_MODELS`. Calibration
+(`sklearn.calibration.calibration_curve` + Brier score) is reported, not
+acted on — no probability is auto-calibrated to improve a headline number.
+
+### Statistical uncertainty
+
+Cross-validation metrics are reported as mean ± std across folds
+(`src/experiments/run_all.py::_aggregate_folds`). The holdout F1 also
+carries a nonparametric bootstrap 95% confidence interval
+(`src/experiments/metrics.py::bootstrap_metric_ci`, 1000 resamples of the
+holdout (true, predicted) pairs).
