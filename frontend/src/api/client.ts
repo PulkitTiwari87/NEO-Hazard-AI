@@ -207,6 +207,7 @@ export const api = {
     const suffix = query.toString() ? `?${query.toString()}` : ''
     return getJson<NeoListResponse>(`/neos${suffix}`)
   },
+  neo: (neoId: string) => getJson<Record<string, unknown>>(`/neo/${encodeURIComponent(neoId)}`),
   models: () => getJson<ModelsResponse>('/models'),
   modelMetrics: (modelName: string) => getJson<ModelMetricsResponse>(`/models/${modelName}/metrics`),
   modelExplainability: (modelName: string) =>

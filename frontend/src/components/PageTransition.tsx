@@ -1,19 +1,8 @@
-import { motion } from 'framer-motion'
 import type { ReactNode } from 'react'
 
-// Critically damped (no overshoot) — a page swap isn't a momentum
-// gesture, so bounce would read as wrong per apple-design §4.
-const spring = { type: 'spring' as const, damping: 1, duration: 0.35 }
-
+// Enter-only CSS animation (.page-enter in index.css). There is no JS animation
+// loop to wait on, so a route change can never stall behind a transition, and
+// prefers-reduced-motion is honored by the global rule in index.css.
 export function PageTransition({ children }: { children: ReactNode }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={spring}
-    >
-      {children}
-    </motion.div>
-  )
+  return <div className="page-enter">{children}</div>
 }

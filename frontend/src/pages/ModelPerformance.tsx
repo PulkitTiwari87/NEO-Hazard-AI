@@ -1,16 +1,6 @@
-import { Fragment, useEffect, useState } from 'react'
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  Bar,
-  BarChart,
-} from 'recharts'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   api,
   type ClassificationMetrics,
@@ -18,49 +8,28 @@ import {
   type ModelRegistryEntry,
   type ModelsResponse,
 } from '../api/client'
-import { UnavailableNotice } from '../components/UnavailableNotice'
+import { MODEL_COLOR, MODEL_LABEL, fmtUtc } from '../lib/research'
+import { ConfusionMatrix } from '../components/charts'
+import { Callout, ChartContainer, EmptyResearchState, KeyValueList, LoadingState, PageHeader, ResearchSection } from '../components/ui'
 
+// Legacy Experiment A baseline: three models from the model registry
+// (results/model_metrics.json), separate from the A–D benchmark artifacts.
 const KNOWN_MODELS = ['logistic_regression', 'random_forest', 'xgboost'] as const
 type ModelName = (typeof KNOWN_MODELS)[number]
 
-// Fixed categorical order, validated CVD-safe against this page's dark
-// surface (#05070d) — see the dataviz skill. Never reassigned per filter.
-const MODEL_COLOR: Record<ModelName, string> = {
-  logistic_regression: '#3987e5',
-  random_forest: '#d95926',
-  xgboost: '#199e70',
-}
-const MODEL_LABEL: Record<ModelName, string> = {
-  logistic_regression: 'Logistic Regression',
-  random_forest: 'Random Forest',
-  xgboost: 'XGBoost',
-}
-const MUTED = '#898781'
-const GRID = '#2c2c2a'
-const SECONDARY_INK = '#c3c2b7'
-
-function ChartCard({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
-      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</p>
-      {children}
-      {note && <p className="mt-3 text-xs text-slate-500">{note}</p>}
-    </div>
-  )
-}
-
-function tickStyle() {
-  return { fill: MUTED, fontSize: 11 }
-}
+const MUTED = '#8b97ab'
+const GRID = 'rgb(255 255 255 / 0.08)'
+const TOOLTIP = { background: '#0a0f1a', border: '1px solid rgb(255 255 255 / 0.18)', fontSize: 12, borderRadius: 4 }
+const tick = { fill: MUTED, fontSize: 11 }
 
 function MetricsBarChart({ metricsByModel }: { metricsByModel: Partial<Record<ModelName, ClassificationMetrics>> }) {
-  const metricKeys: Array<keyof ClassificationMetrics> = ['accuracy', 'precision', 'recall', 'f1']
-  const metricLabel: Record<string, string> = { accuracy: 'Acc', precision: 'Prec', recall: 'Rec', f1: 'F1' }
-  const data = metricKeys.map((key) => {
-    const row: Record<string, number | string> = { metric: metricLabel[key] }
-    for (const model of KNOWN_MODELS) {
-      const value = metricsByModel[model]?.[key]
-      if (typeof value === 'number') row[model] = Number(value.toFixed(4))
+  const keys = ['accuracy', 'precision', 'recall', 'f1'] as const
+  const label: Record<string, string> = { accuracy: 'Accuracy', precision: 'Precision', recall: 'Recall', f1: 'F1' }
+  const data = keys.map((key) => {
+    const row: Record<string, number | string> = { metric: label[key] }
+    for (const m of KNOWN_MODELS) {
+      const v = metricsByModel[m]?.[key]
+      if (typeof v === 'number') row[m] = Number(v.toFixed(4))
     }
     return row
   })
@@ -68,47 +37,64 @@ function MetricsBarChart({ metricsByModel }: { metricsByModel: Partial<Record<Mo
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
         <CartesianGrid stroke={GRID} vertical={false} />
-        <XAxis dataKey="metric" tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <YAxis domain={[0, 1]} tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <Tooltip
-          contentStyle={{ background: '#0d0d0d', border: '1px solid #2c2c2a', fontSize: 12 }}
-          labelStyle={{ color: SECONDARY_INK }}
-        />
-        <Legend wrapperStyle={{ fontSize: 12, color: SECONDARY_INK }} formatter={(v: string) => MODEL_LABEL[v as ModelName] ?? v} />
-        {KNOWN_MODELS.map((model) => (
-          <Bar key={model} dataKey={model} name={model} fill={MODEL_COLOR[model]} radius={[3, 3, 0, 0]} maxBarSize={28} />
+        <XAxis dataKey="metric" tick={tick} axisLine={{ stroke: GRID }} tickLine={false} />
+        <YAxis domain={[0, 1]} tick={tick} axisLine={{ stroke: GRID }} tickLine={false} />
+        <Tooltip contentStyle={TOOLTIP} />
+        <Legend wrapperStyle={{ fontSize: 12 }} formatter={(v: string) => MODEL_LABEL[v] ?? v} />
+        {KNOWN_MODELS.map((m) => (
+          <Bar key={m} dataKey={m} name={m} fill={MODEL_COLOR[m]} radius={[3, 3, 0, 0]} maxBarSize={28} />
         ))}
       </BarChart>
     </ResponsiveContainer>
   )
 }
 
-function RocCurveChart({ metricsByModel }: { metricsByModel: Partial<Record<ModelName, ClassificationMetrics>> }) {
-  const diagonal = [
-    { fpr: 0, y: 0 },
-    { fpr: 1, y: 1 },
-  ]
+function CurveChart({
+  metricsByModel,
+  kind,
+}: {
+  metricsByModel: Partial<Record<ModelName, ClassificationMetrics>>
+  kind: 'roc' | 'pr'
+}) {
+  const xKey = kind === 'roc' ? 'fpr' : 'recall'
+  const yKey = kind === 'roc' ? 'tpr' : 'precision'
   return (
     <ResponsiveContainer width="100%" height={280}>
       <LineChart margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
         <CartesianGrid stroke={GRID} />
-        <XAxis type="number" dataKey="fpr" domain={[0, 1]} tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <YAxis type="number" domain={[0, 1]} tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <Tooltip contentStyle={{ background: '#0d0d0d', border: '1px solid #2c2c2a', fontSize: 12 }} />
-        <Legend wrapperStyle={{ fontSize: 12, color: SECONDARY_INK }} />
-        <Line data={diagonal} dataKey="y" name="Chance" stroke={MUTED} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
-        {KNOWN_MODELS.map((model) => {
-          const curve = metricsByModel[model]?.roc_curve
-          if (!curve) return null
-          const points = curve.fpr.map((f, i) => ({ fpr: f, tpr: curve.tpr[i] }))
-          const auc = metricsByModel[model]?.roc_auc
+        <XAxis type="number" dataKey={xKey} domain={[0, 1]} tick={tick} axisLine={{ stroke: GRID }} tickLine={false} />
+        <YAxis type="number" domain={[0, 1]} tick={tick} axisLine={{ stroke: GRID }} tickLine={false} />
+        <Tooltip contentStyle={TOOLTIP} />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
+        {kind === 'roc' && (
+          <Line
+            data={[{ fpr: 0, tpr: 0 }, { fpr: 1, tpr: 1 }]}
+            dataKey="tpr"
+            name="Chance"
+            stroke={MUTED}
+            strokeDasharray="4 4"
+            dot={false}
+            isAnimationActive={false}
+          />
+        )}
+        {KNOWN_MODELS.map((m) => {
+          const metrics = metricsByModel[m]
+          const c = kind === 'roc' ? metrics?.roc_curve : metrics?.pr_curve
+          if (!c) return null
+          const points =
+            kind === 'roc' && 'fpr' in c
+              ? c.fpr.map((f, i) => ({ fpr: f, tpr: c.tpr[i] }))
+              : 'recall' in c
+                ? c.recall.map((r, i) => ({ recall: r, precision: c.precision[i] }))
+                : []
+          const auc = kind === 'roc' ? metrics?.roc_auc : metrics?.pr_auc
           return (
             <Line
-              key={model}
+              key={m}
               data={points}
-              dataKey="tpr"
-              name={`${MODEL_LABEL[model]}${auc != null ? ` (AUC ${auc.toFixed(3)})` : ''}`}
-              stroke={MODEL_COLOR[model]}
+              dataKey={yKey}
+              name={`${MODEL_LABEL[m]}${auc != null ? ` (AUC ${auc.toFixed(3)})` : ''}`}
+              stroke={MODEL_COLOR[m]}
               strokeWidth={2}
               dot={false}
               isAnimationActive={false}
@@ -120,97 +106,15 @@ function RocCurveChart({ metricsByModel }: { metricsByModel: Partial<Record<Mode
   )
 }
 
-function PrCurveChart({ metricsByModel }: { metricsByModel: Partial<Record<ModelName, ClassificationMetrics>> }) {
-  return (
-    <ResponsiveContainer width="100%" height={280}>
-      <LineChart margin={{ top: 8, right: 16, left: 4, bottom: 0 }}>
-        <CartesianGrid stroke={GRID} />
-        <XAxis type="number" dataKey="recall" domain={[0, 1]} tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <YAxis type="number" domain={[0, 1]} tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <Tooltip contentStyle={{ background: '#0d0d0d', border: '1px solid #2c2c2a', fontSize: 12 }} />
-        <Legend wrapperStyle={{ fontSize: 12, color: SECONDARY_INK }} />
-        {KNOWN_MODELS.map((model) => {
-          const curve = metricsByModel[model]?.pr_curve
-          if (!curve) return null
-          const points = curve.recall.map((r, i) => ({ recall: r, precision: curve.precision[i] }))
-          const auc = metricsByModel[model]?.pr_auc
-          return (
-            <Line
-              key={model}
-              data={points}
-              dataKey="precision"
-              name={`${MODEL_LABEL[model]}${auc != null ? ` (AUC ${auc.toFixed(3)})` : ''}`}
-              stroke={MODEL_COLOR[model]}
-              strokeWidth={2}
-              dot={false}
-              isAnimationActive={false}
-            />
-          )
-        })}
-      </LineChart>
-    </ResponsiveContainer>
-  )
-}
-
-function ConfusionMatrixGrid({ model, metrics }: { model: ModelName; metrics: ClassificationMetrics }) {
-  const { labels, matrix } = metrics.confusion_matrix
-  const max = Math.max(...matrix.flat())
-  const cellStyle = (value: number) => {
-    const t = max > 0 ? value / max : 0
-    // Interpolate from the dark surface toward this model's series color.
-    return {
-      backgroundColor: `color-mix(in oklab, ${MODEL_COLOR[model]} ${Math.round(t * 75)}%, #1a1a19)`,
-    }
-  }
-  return (
-    <div>
-      <p className="mb-2 text-xs font-medium" style={{ color: MODEL_COLOR[model] }}>
-        {MODEL_LABEL[model]}
-      </p>
-      <div className="grid grid-cols-[auto_1fr_1fr] gap-1 text-center text-xs">
-        <div />
-        <div className="truncate px-1 py-1 text-slate-500">pred: no</div>
-        <div className="truncate px-1 py-1 text-slate-500">pred: yes</div>
-        {matrix.map((row, i) => (
-          <Fragment key={i}>
-            <div className="flex items-center justify-end px-1 text-slate-500">
-              true: {i === 0 ? 'no' : 'yes'}
-            </div>
-            {row.map((value, j) => (
-              <div
-                key={j}
-                className="flex items-center justify-center rounded py-3 font-mono text-slate-50"
-                style={cellStyle(value)}
-              >
-                {value}
-              </div>
-            ))}
-          </Fragment>
-        ))}
-      </div>
-      <p className="mt-1 text-[10px] text-slate-600">
-        labels: {labels[0]} / {labels[1]}
-      </p>
-    </div>
-  )
-}
-
-function FeatureImportanceChart({ importance }: { importance: { feature: string; mean_abs_shap: number }[] }) {
+function ShapBars({ importance }: { importance: { feature: string; mean_abs_shap: number }[] }) {
   const top = importance.slice(0, 8).reverse()
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={top} layout="vertical" margin={{ top: 8, right: 16, left: 8, bottom: 0 }}>
         <CartesianGrid stroke={GRID} horizontal={false} />
-        <XAxis type="number" tick={tickStyle()} axisLine={{ stroke: GRID }} tickLine={false} />
-        <YAxis
-          type="category"
-          dataKey="feature"
-          width={150}
-          tick={{ fill: SECONDARY_INK, fontSize: 11 }}
-          axisLine={{ stroke: GRID }}
-          tickLine={false}
-        />
-        <Tooltip contentStyle={{ background: '#0d0d0d', border: '1px solid #2c2c2a', fontSize: 12 }} />
+        <XAxis type="number" tick={tick} axisLine={{ stroke: GRID }} tickLine={false} />
+        <YAxis type="category" dataKey="feature" width={150} tick={{ fill: '#c3c9d6', fontSize: 11 }} axisLine={{ stroke: GRID }} tickLine={false} />
+        <Tooltip contentStyle={TOOLTIP} />
         <Bar dataKey="mean_abs_shap" name="mean |SHAP value|" fill={MODEL_COLOR.random_forest} radius={[0, 3, 3, 0]} maxBarSize={16} />
       </BarChart>
     </ResponsiveContainer>
@@ -228,171 +132,110 @@ export function ModelPerformance() {
       api
         .modelMetrics(name)
         .then((res) => {
-          if (res.status === 'ok' && res.metrics) {
-            setMetricsByModel((prev) => ({ ...prev, [name]: res.metrics }))
-          }
+          if (res.status === 'ok' && res.metrics) setMetricsByModel((prev) => ({ ...prev, [name]: res.metrics }))
         })
         .catch(() => null)
     })
     api.modelExplainability('random_forest').then(setExplainability).catch(() => null)
   }, [])
 
-  const registryByModel: Partial<Record<ModelName, ModelRegistryEntry>> = {}
+  const registry: Partial<Record<ModelName, ModelRegistryEntry>> = {}
   for (const entry of models?.models ?? []) {
-    if ((KNOWN_MODELS as readonly string[]).includes(entry.model_name)) {
-      registryByModel[entry.model_name as ModelName] = entry
-    }
+    if ((KNOWN_MODELS as readonly string[]).includes(entry.model_name)) registry[entry.model_name as ModelName] = entry
   }
   const anyMetrics = Object.keys(metricsByModel).length > 0
-  const reference = registryByModel.random_forest ?? registryByModel.logistic_regression ?? registryByModel.xgboost
+  const ref = registry.random_forest ?? registry.logistic_regression ?? registry.xgboost
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-        Experiment A — Original / Label-Defining Feature Experiment
-      </h2>
+    <div>
+      <PageHeader
+        eyebrow="Research · Legacy baseline"
+        title="Experiment A — legacy baseline"
+        description="The original single-feature-set models, including the two fields that define NASA's label. Near-perfect tree-model scores here reflect recovering that rule, not new hazard signal."
+        meta={ref ? [{ label: 'Trained', value: fmtUtc(ref.trained_at_utc) }, { label: 'Seed', value: String(ref.random_seed) }, { label: 'Dataset rows', value: String(ref.dataset_row_count) }] : undefined}
+      />
 
+      {models === null && <LoadingState variant="page" />}
       {models?.status === 'unavailable' && !anyMetrics && (
-        <UnavailableNotice detail="No trained models found. Run `python -m src.models.train`." />
+        <EmptyResearchState title="NO TRAINED MODELS">
+          <p>The legacy baseline has not been trained against the current NASA dataset.</p>
+          <p className="mt-1">Run the training stage to populate this page.</p>
+        </EmptyResearchState>
       )}
 
-      {reference && (
-        <section className="rounded-lg border border-white/10 bg-white/[0.02] p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            How these models were trained
-          </p>
-          <div className="grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
-            <p>
-              <span className="text-slate-500">Dataset: </span>
-              {reference.dataset_row_count} rows (one row per unique NEO object), split{' '}
-              {Math.round((1 - reference.test_size) * reference.dataset_row_count)} train /{' '}
-              {Math.round(reference.test_size * reference.dataset_row_count)} test —{' '}
-              {Math.round((1 - reference.test_size) * 100)}/{Math.round(reference.test_size * 100)}{' '}
-              stratified split, seed {reference.random_seed}.
-            </p>
-            <p>
-              <span className="text-slate-500">Target: </span>
-              <code className="rounded bg-black/30 px-1">{reference.target_column}</code> — NASA/JPL's own
-              classification, passed through unmodified.
-            </p>
-            <p>
-              <span className="text-slate-500">Features: </span>
-              {reference.numeric_features.length} numeric + {reference.categorical_features.length} categorical
-              (one-hot encoded) — see <code className="rounded bg-black/30 px-1">docs/FEATURES.md</code>.
-            </p>
-            <p>
-              <span className="text-slate-500">Preprocessing: </span>
-              median imputation + standard scaling (numeric), most-frequent imputation + one-hot
-              encoding (categorical) — fit only on the training fold, inside each model's pipeline.
-            </p>
-            <p>
-              <span className="text-slate-500">Trained: </span>
-              {new Date(reference.trained_at_utc).toUTCString()}
-            </p>
-            <p>
-              <span className="text-slate-500">Class imbalance: </span>
-              handled adaptively per model —{' '}
-              <code className="rounded bg-black/30 px-1">class_weight=&quot;balanced&quot;</code> (logistic
-              regression, random forest) or a computed{' '}
-              <code className="rounded bg-black/30 px-1">scale_pos_weight</code> (XGBoost), from the actual
-              training-fold label counts, not assumed in advance.
-            </p>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            {KNOWN_MODELS.map((model) => {
-              const entry = registryByModel[model]
-              if (!entry) return null
-              const hp = entry.hyperparameters
-              const highlight =
-                model === 'logistic_regression'
-                  ? `max_iter=${hp.max_iter}, class_weight=${hp.class_weight}`
-                  : model === 'random_forest'
-                    ? `n_estimators=${hp.n_estimators}, class_weight=${hp.class_weight}`
-                    : `scale_pos_weight=${Number(hp.scale_pos_weight).toFixed(2)}`
-              return (
-                <div key={model} className="rounded-md border border-white/5 bg-black/20 px-3 py-2 text-xs">
-                  <p className="font-medium" style={{ color: MODEL_COLOR[model] }}>
-                    {MODEL_LABEL[model]}
-                  </p>
-                  <p className="mt-1 text-slate-500">{highlight}</p>
-                </div>
-              )
-            })}
-          </div>
-        </section>
+      {ref && (
+        <ResearchSection id="training" eyebrow="Setup" title="How these models were trained">
+          <ChartContainer title="Registry record">
+            <KeyValueList
+              columns="sm:grid-cols-2 lg:grid-cols-3"
+              items={[
+                { label: 'Target', value: ref.target_column },
+                { label: 'Features', value: `${ref.numeric_features.length} numeric + ${ref.categorical_features.length} categorical` },
+                { label: 'Test size', value: String(ref.test_size) },
+                ...KNOWN_MODELS.filter((m) => registry[m]).map((m) => ({
+                  label: MODEL_LABEL[m],
+                  value: Object.entries(registry[m]?.hyperparameters ?? {})
+                    .filter(([k]) => ['max_iter', 'class_weight', 'n_estimators', 'scale_pos_weight'].includes(k))
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(', '),
+                })),
+              ]}
+            />
+          </ChartContainer>
+        </ResearchSection>
       )}
 
       {anyMetrics && (
-        <>
-          <ChartCard
-            title="Accuracy / Precision / Recall / F1 by model"
-            note="Computed by sklearn.metrics on the held-out test fold — see results/model_metrics.json."
-          >
-            <MetricsBarChart metricsByModel={metricsByModel} />
-          </ChartCard>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <ChartCard
-              title="ROC curve"
-              note="X-axis: false positive rate. Y-axis: true positive rate. Diagonal = a classifier no better than chance."
-            >
-              <RocCurveChart metricsByModel={metricsByModel} />
-            </ChartCard>
-            <ChartCard title="Precision-Recall curve" note="X-axis: recall. Y-axis: precision.">
-              <PrCurveChart metricsByModel={metricsByModel} />
-            </ChartCard>
-          </div>
-
-          <ChartCard title="Confusion matrices (test fold)">
-            <div className="grid gap-6 sm:grid-cols-3">
-              {KNOWN_MODELS.map((model) => {
-                const metrics = metricsByModel[model]
-                return metrics ? <ConfusionMatrixGrid key={model} model={model} metrics={metrics} /> : null
+        <ResearchSection id="metrics" eyebrow="Held-out test fold" title="Metrics">
+          <div className="space-y-6">
+            <ChartContainer title="Accuracy · precision · recall · F1" note="Computed by sklearn.metrics on the held-out test fold.">
+              <MetricsBarChart metricsByModel={metricsByModel} />
+            </ChartContainer>
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ChartContainer title="ROC curve" note="Dashed diagonal: a classifier no better than chance.">
+                <CurveChart metricsByModel={metricsByModel} kind="roc" />
+              </ChartContainer>
+              <ChartContainer title="Precision–recall curve">
+                <CurveChart metricsByModel={metricsByModel} kind="pr" />
+              </ChartContainer>
+            </div>
+            <div className="grid gap-6 lg:grid-cols-3">
+              {KNOWN_MODELS.map((m) => {
+                const cm = metricsByModel[m]?.confusion_matrix.matrix
+                return cm ? (
+                  <ChartContainer key={m} eyebrow="Confusion matrix" title={MODEL_LABEL[m]}>
+                    <ConfusionMatrix tn={cm[0][0]} fp={cm[0][1]} fn={cm[1][0]} tp={cm[1][1]} />
+                  </ChartContainer>
+                ) : null
               })}
             </div>
-          </ChartCard>
-        </>
+          </div>
+        </ResearchSection>
       )}
 
       {explainability?.status === 'ok' && explainability.global_importance && (
-        <ChartCard
-          title="Feature importance — random_forest (SHAP)"
-          note="Mean |SHAP value| across a sample of the test fold. Explains this model's behavior, not physical causation — see docs/LIMITATIONS.md."
-        >
-          <FeatureImportanceChart importance={explainability.global_importance} />
-        </ChartCard>
+        <ResearchSection id="shap" eyebrow="Interpretability" title="Random forest — SHAP">
+          <ChartContainer title="Mean |SHAP value|" note="Explains this model's behaviour, not physical causation.">
+            <ShapBars importance={explainability.global_importance} />
+          </ChartContainer>
+        </ResearchSection>
       )}
       {explainability?.status === 'unavailable' && (
-        <ChartCard title="Feature importance — random_forest (SHAP)">
-          <UnavailableNotice detail={explainability.detail} />
-        </ChartCard>
+        <ResearchSection id="shap" eyebrow="Interpretability" title="Random forest — SHAP">
+          <EmptyResearchState compact>
+            <p>{explainability.detail ?? 'SHAP explainability has not been generated.'}</p>
+          </EmptyResearchState>
+        </ResearchSection>
       )}
 
       {anyMetrics && (
-        <div className="rounded-lg border border-amber-700/30 bg-amber-950/20 px-4 py-3 text-xs text-amber-200/90">
-          Read before drawing conclusions: <code className="rounded bg-black/30 px-1">moid_au</code> and{' '}
-          <code className="rounded bg-black/30 px-1">absolute_magnitude_h</code> are direct model inputs, and
-          NASA/JPL's own hazard flag is essentially a threshold rule over those two quantities. Near-perfect
-          tree-model scores mean the model recovered that known rule from its own inputs — not that it
-          discovered new hazard signal. See <code className="rounded bg-black/30 px-1">docs/MODEL_CARD.md</code>{' '}
-          and <code className="rounded bg-black/30 px-1">docs/LIMITATIONS.md</code>, or the full{' '}
-          <a href="/feature-audit" className="underline hover:text-amber-100">
-            Feature Audit
-          </a>{' '}
-          and leakage-audited{' '}
-          <a href="/experiments" className="underline hover:text-amber-100">
-            Experiments
-          </a>{' '}
-          (the primary research view) for what remains once these features are removed.
-        </div>
+        <Callout tone="warn" title="Read before drawing conclusions">
+          <code className="font-mono">moid_au</code> and <code className="font-mono">absolute_magnitude_h</code> are direct
+          inputs here, and NASA's flag is essentially a threshold over them. See the{' '}
+          <Link to="/feature-audit" className="text-accent underline underline-offset-2">Feature Audit</Link> and the
+          leakage-aware <Link to="/experiments" className="text-accent underline underline-offset-2">Experiments</Link>.
+        </Callout>
       )}
-
-      <p className="text-xs text-slate-500">
-        Every number on this page is read live from <code>results/model_metrics.json</code> and{' '}
-        <code>results/shap_global_importance.json</code>, generated by <code>python -m src.models.train</code>{' '}
-        and <code>python -m src.explainability.shap_analysis</code>. No number is hardcoded — see{' '}
-        <code>backend/main.py</code>.
-      </p>
     </div>
   )
 }

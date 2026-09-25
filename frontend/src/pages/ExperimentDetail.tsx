@@ -1,200 +1,263 @@
-import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { api, type ExperimentDetailResponse } from '../api/client'
-import { UnavailableNotice } from '../components/UnavailableNotice'
-import { StatGrid, StatTile } from '../components/StatTile'
-import { ConfusionMatrixGrid, CvFoldBars, PrCurveChart, RocCurveChart, ThresholdChart } from '../components/charts'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { experimentMeta, fmt, fmtInt, fmtUtc, metaStrip, modelLabel, str } from '../lib/research'
+import { useFeatureAudit, useExperimentDetail, useReproducibility } from '../lib/useApi'
+import { ModelSelector } from '../components/Selectors'
+import { FeatureBadge } from '../components/FeatureAuditMatrix'
+import {
+  CalibrationPanel,
+  ConfusionPanel,
+  ErrorPanel,
+  FoldPanel,
+  ImportancePanel,
+  ModelResultsPanel,
+  PrPanel,
+  RocPanel,
+  ShapPanel,
+  ThresholdPanel,
+} from '../components/panels'
+import {
+  CodeBlock,
+  EmptyResearchState,
+  ErrorState,
+  KeyValueList,
+  LoadingState,
+  MetricCard,
+  MetricGrid,
+  MonoTag,
+  PageHeader,
+  ResearchSection,
+  ScientificCard,
+  Skeleton,
+} from '../components/ui'
 
-function fmt(value: number | null | undefined, digits = 3): string {
-  return value === null || value === undefined ? 'N/A' : value.toFixed(digits)
+const SECTIONS = [
+  ['overview', 'Overview'],
+  ['feature-set', 'Feature set'],
+  ['cross-validation', 'Cross validation'],
+  ['model-results', 'Model results'],
+  ['roc', 'ROC'],
+  ['precision-recall', 'Precision–recall'],
+  ['threshold', 'Threshold analysis'],
+  ['calibration', 'Calibration'],
+  ['importance', 'Feature importance'],
+  ['shap', 'SHAP'],
+  ['errors', 'Error analysis'],
+  ['reproducibility', 'Reproducibility'],
+] as const
+
+/** Mounts its children the first time it nears the viewport — keeps a 12-section page light. */
+function Deferred({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // Without IntersectionObserver there is nothing to defer on — render immediately.
+  const [show, setShow] = useState(() => typeof IntersectionObserver === 'undefined')
+  useEffect(() => {
+    const el = ref.current
+    if (!el || show) return
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setShow(true)
+          io.disconnect()
+        }
+      },
+      { rootMargin: '500px' },
+    )
+    io.observe(el)
+    // Backstop: observers don't fire in background tabs or print views, and a
+    // section that can never mount is worse than one that mounts a little early.
+    const fallback = window.setTimeout(() => setShow(true), 2500)
+    return () => {
+      io.disconnect()
+      window.clearTimeout(fallback)
+    }
+  }, [show])
+  return <div ref={ref}>{show ? children : <Skeleton className="h-72 w-full" />}</div>
 }
+
+const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
 
 export function ExperimentDetail() {
   const { experiment = '', model = '' } = useParams()
-  const [data, setData] = useState<ExperimentDetailResponse | null>(null)
+  const navigate = useNavigate()
+  const { data, error, loading } = useExperimentDetail(experiment, model)
+  const audit = useFeatureAudit().data
+  const repro = useReproducibility().data
+  const meta = experimentMeta(experiment)
 
-  useEffect(() => {
-    setData(null)
-    api
-      .experimentDetail(experiment, model)
-      .then(setData)
-      .catch(() => setData({ status: 'unavailable', detail: 'Could not reach the backend.' }))
-  }, [experiment, model])
+  const category = (f: string): 'A' | 'B' | 'F' | undefined =>
+    audit?.label_defining_features.includes(f)
+      ? 'A'
+      : audit?.label_derived_features.includes(f)
+        ? 'B'
+        : audit?.epoch_dependent_excluded_features.includes(f)
+          ? 'F'
+          : undefined
 
-  if (!data) return <p className="text-sm text-slate-500">Loading…</p>
-  if (data.status === 'unavailable') {
+  const header = (
+    <>
+      <p className="mb-4 text-xs">
+        <Link to="/experiments" className="text-accent underline underline-offset-2">← All experiments</Link>
+      </p>
+      <PageHeader
+        eyebrow={meta ? `Experiment ${meta.letter}` : 'Experiment'}
+        title={meta?.title ?? experiment}
+        description={data?.status === 'ok' ? str(data.metadata?.experiment_purpose) : undefined}
+        meta={data?.status === 'ok' ? metaStrip(data, experiment, model) : [{ label: 'Model', value: modelLabel(model) }]}
+      />
+      <div className="mb-6">
+        <ModelSelector value={model} experiment={experiment} onChange={(m) => navigate(`/experiments/${experiment}/${m}`)} />
+      </div>
+    </>
+  )
+
+  if (loading) return <div>{header}<LoadingState variant="page" /></div>
+  if (error) return <div>{header}<ErrorState /></div>
+  if (!data || data.status === 'unavailable') {
     return (
-      <div className="space-y-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-          {experiment} / {model}
-        </h2>
-        <UnavailableNotice detail={data.detail} />
+      <div>
+        {header}
+        <EmptyResearchState
+          meta={[
+            { label: 'Experiment', value: meta?.tag ?? experiment },
+            { label: 'Model', value: modelLabel(model) },
+          ]}
+        >
+          <p>This experiment has not been executed against the current NASA dataset.</p>
+          <p className="mt-1">Run the experiment to populate this analysis.</p>
+          {data?.detail && <p className="mt-3 font-mono text-[11px] text-faint">{data.detail}</p>}
+        </EmptyResearchState>
       </div>
     )
   }
 
-  const cm = data.confusion_matrix
-  const roc = data.roc_curve
-  const pr = data.pr_curve
-  const ci = data.test_metrics?.f1_bootstrap_ci
+  const m = data.metadata ?? {}
+  const numeric = list(m.numeric_features)
+  const categorical = list(m.categorical_features)
+  const software = (m.software_versions ?? {}) as Record<string, unknown>
+  const provenance = (m.dataset_provenance ?? {}) as Record<string, unknown>
+  const hyper = (m.best_hyperparameters ?? {}) as Record<string, unknown>
 
-  return (
-    <div className="space-y-8">
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-          {String(data.metadata?.experiment_name ?? experiment)} — <span className="font-mono">{model}</span>
-        </h2>
-        <p className="mt-1 text-xs text-slate-500">{String(data.metadata?.experiment_purpose ?? '')}</p>
-      </div>
-
-      <StatGrid className="grid gap-3 sm:grid-cols-4">
-        <StatTile label="Test F1" value={fmt(data.test_metrics?.f1 as number)} />
-        <StatTile label="Test Precision" value={fmt(data.test_metrics?.precision as number)} />
-        <StatTile label="Test Recall" value={fmt(data.test_metrics?.recall as number)} />
-        <StatTile label="Test ROC-AUC" value={fmt(data.test_metrics?.roc_auc as number)} />
-      </StatGrid>
-      {ci && (
-        <p className="text-xs text-slate-500">
-          F1 bootstrap 95% CI: [{fmt(ci.ci_low)}, {fmt(ci.ci_high)}]
-        </p>
-      )}
-
-      <section className="grid gap-6 sm:grid-cols-2">
-        <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Confusion matrix (test)</h3>
-          {cm && <ConfusionMatrixGrid matrix={cm.matrix} labels={cm.labels} />}
-        </div>
-        <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-            Cross-validation F1 by fold
-          </h3>
-          <CvFoldBars folds={(data.fold_metrics ?? []) as Record<string, unknown>[]} metricKey="f1" />
-        </div>
-      </section>
-
-      <section className="grid gap-6 sm:grid-cols-2">
-        <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">ROC curve (test)</h3>
-          {roc ? (
-            <RocCurveChart fpr={roc.fpr} tpr={roc.tpr} aucLabel={`AUC=${fmt(data.test_metrics?.roc_auc as number)}`} />
-          ) : (
-            <p className="text-xs text-slate-500">Not available (single-class test fold or model has no predict_proba).</p>
-          )}
-        </div>
-        <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Precision-Recall curve (test)</h3>
-          {pr ? (
-            <PrCurveChart precision={pr.precision} recall={pr.recall} apLabel={`AP=${fmt(pr.average_precision)}`} />
-          ) : (
-            <p className="text-xs text-slate-500">Not available.</p>
-          )}
-        </div>
-      </section>
-
-      <section>
-        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-          Threshold analysis (computed on out-of-fold CV predictions, never the test set)
-        </h3>
-        <ThresholdChart rows={data.threshold_analysis?.grid ?? []} />
-        {data.threshold_analysis?.best_by_f1 && (
-          <p className="mt-2 text-xs text-slate-500">
-            Best F1 on the 0.05-grid: threshold={data.threshold_analysis.best_by_f1.threshold} → F1=
-            {fmt(data.threshold_analysis.best_by_f1.f1)}. The test-set evaluation above always uses the model's
-            default 0.5 threshold — this grid is diagnostic only, per docs/METHODOLOGY.md.
-          </p>
-        )}
-      </section>
-
-      {data.calibration && (
-        <section>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">Calibration</h3>
-          <p className="text-xs text-slate-400">Brier score (test): {fmt(data.calibration.brier_score, 4)}</p>
-        </section>
-      )}
-
-      {data.shap_summary && (
-        <section>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-            SHAP global importance (mean |SHAP|, n={data.shap_summary.sample_size} test rows)
-          </h3>
-          <FeatureBarList entries={Object.entries(data.shap_summary.global_mean_abs_shap).slice(0, 10)} />
-        </section>
-      )}
-
-      {data.feature_importance?.permutation_importance && (
-        <section>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-            Permutation importance (test set, scoring=f1)
-          </h3>
-          <FeatureBarList
-            entries={data.feature_importance.permutation_importance.features
-              .map((f, i) => [f, data.feature_importance!.permutation_importance.mean[i]] as [string, number])
-              .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-              .slice(0, 10)}
-          />
-        </section>
-      )}
-
-      <section className="grid gap-6 sm:grid-cols-2">
-        <ErrorTable title="False positives (test)" rows={data.false_positives_sample ?? []} />
-        <ErrorTable title="False negatives (test)" rows={data.false_negatives_sample ?? []} />
-      </section>
-    </div>
-  )
-}
-
-function FeatureBarList({ entries }: { entries: [string, number][] }) {
-  if (!entries.length) return <p className="text-xs text-slate-500">No data.</p>
-  const max = Math.max(...entries.map(([, v]) => Math.abs(v)), 1e-9)
-  return (
-    <div className="space-y-1">
-      {entries.map(([name, value], i) => (
-        <div key={name} className="flex items-center gap-2 text-xs">
-          <span className="w-56 truncate font-mono text-slate-400">{name}</span>
-          <div className="h-3 flex-1 rounded bg-white/[0.04]">
-            <motion.div
-              className="h-3 rounded bg-sky-500/60"
-              initial={{ width: 0 }}
-              animate={{ width: `${(Math.abs(value) / max) * 100}%` }}
-              transition={{ type: 'spring', damping: 1, duration: 0.5, delay: i * 0.03 }}
-            />
-          </div>
-          <span className="w-16 text-right font-mono text-slate-500">{value.toFixed(4)}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function ErrorTable({ title, rows }: { title: string; rows: Record<string, unknown>[] }) {
   return (
     <div>
-      <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">{title}</h3>
-      {rows.length === 0 ? (
-        <p className="text-xs text-slate-500">None on this test set.</p>
-      ) : (
-        <div className="max-h-64 overflow-auto rounded-lg border border-white/10">
-          <table className="w-full text-left text-[11px]">
-            <thead className="bg-white/[0.04] text-slate-500">
-              <tr>
-                <th className="px-2 py-1">neo_id</th>
-                <th className="px-2 py-1">probability</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={String(row.neo_id)} className="border-t border-white/5">
-                  <td className="px-2 py-1 font-mono">{String(row.neo_id)}</td>
-                  <td className="px-2 py-1 font-mono">
-                    {typeof row.model_probability === 'number' ? row.model_probability.toFixed(3) : 'N/A'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {header}
+      <div className="lg:grid lg:grid-cols-[11rem_1fr] lg:gap-8">
+        <nav aria-label="Sections" className="mb-6 lg:sticky lg:top-20 lg:mb-0 lg:self-start">
+          <MonoTag className="mb-2 hidden lg:block">Contents</MonoTag>
+          <ol className="flex gap-3 overflow-x-auto pb-2 text-xs lg:block lg:space-y-1 lg:overflow-visible lg:pb-0">
+            {SECTIONS.map(([id, label], i) => (
+              <li key={id} className="shrink-0">
+                <a href={`#${id}`} className="text-muted hover:text-ink">
+                  <span className="mr-1.5 font-mono text-[10px] text-faint">{String(i + 1).padStart(2, '0')}</span>
+                  {label}
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="min-w-0 divide-y divide-line">
+          <ResearchSection id="overview" eyebrow="01" title="Overview">
+            <MetricGrid>
+              <MetricCard label="Features" value={fmtInt(list(m.feature_columns).length)} />
+              <MetricCard label="Training rows" value={fmtInt(typeof m.train_rows === 'number' ? m.train_rows : null)} />
+              <MetricCard label="Test rows" value={fmtInt(typeof m.test_rows === 'number' ? m.test_rows : null)} />
+              <MetricCard label="Tuned" value={m.tuned === true ? 'Yes' : m.tuned === false ? 'No' : null} sub="Inside CV folds" />
+            </MetricGrid>
+          </ResearchSection>
+
+          <ResearchSection id="feature-set" eyebrow="02" title="Feature set" description="A label-defining · B derived from A · F excluded, per the feature audit.">
+            <ScientificCard>
+              <MonoTag className="mb-2 block">{numeric.length} numeric</MonoTag>
+              <ul className="flex flex-wrap gap-1.5">
+                {numeric.map((f) => (
+                  <li key={f}><FeatureBadge name={f} category={category(f)} /></li>
+                ))}
+              </ul>
+              {categorical.length > 0 && (
+                <>
+                  <MonoTag className="mb-2 mt-4 block">{categorical.length} categorical</MonoTag>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {categorical.map((f) => (
+                      <li key={f}><FeatureBadge name={f} category={category(f)} /></li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </ScientificCard>
+          </ResearchSection>
+
+          <ResearchSection id="cross-validation" eyebrow="03" title="Cross validation">
+            <Deferred><FoldPanel detail={data} /></Deferred>
+          </ResearchSection>
+
+          <ResearchSection id="model-results" eyebrow="04" title="Model results">
+            <div className="space-y-6">
+              <ModelResultsPanel detail={data} />
+              <Deferred><ConfusionPanel detail={data} /></Deferred>
+            </div>
+          </ResearchSection>
+
+          <ResearchSection id="roc" eyebrow="05" title="ROC">
+            <Deferred><RocPanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="precision-recall" eyebrow="06" title="Precision–recall">
+            <Deferred><PrPanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="threshold" eyebrow="07" title="Threshold analysis">
+            <Deferred><ThresholdPanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="calibration" eyebrow="08" title="Calibration">
+            <Deferred><CalibrationPanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="importance" eyebrow="09" title="Feature importance">
+            <Deferred><ImportancePanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="shap" eyebrow="10" title="SHAP">
+            <Deferred><ShapPanel detail={data} /></Deferred>
+          </ResearchSection>
+          <ResearchSection id="errors" eyebrow="11" title="Error analysis">
+            <Deferred><ErrorPanel detail={data} /></Deferred>
+          </ResearchSection>
+
+          <ResearchSection id="reproducibility" eyebrow="12" title="Reproducibility">
+            <div className="space-y-4">
+              <ScientificCard>
+                <KeyValueList
+                  columns="sm:grid-cols-2 lg:grid-cols-3"
+                  items={[
+                    { label: 'Random seed', value: str(m.random_seed) },
+                    { label: 'CV folds', value: str(m.n_cv_folds) },
+                    { label: 'Outer test size', value: str(m.outer_test_size) },
+                    { label: 'Dataset rows', value: fmtInt(typeof m.dataset_row_count === 'number' ? m.dataset_row_count : null) },
+                    { label: 'Trained (UTC)', value: fmtUtc(m.trained_at_utc) },
+                    { label: 'Dataset validated (UTC)', value: fmtUtc(provenance.validated_at_utc) },
+                    { label: 'Python', value: str(software.python) },
+                    { label: 'scikit-learn', value: str(software.scikit_learn) },
+                    { label: 'XGBoost', value: str(software.xgboost) },
+                    { label: 'Git commit', value: 'Not recorded in artifacts' },
+                  ]}
+                />
+                {Object.keys(hyper).length > 0 && (
+                  <details className="mt-4 text-xs">
+                    <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-[0.1em] text-muted hover:text-ink">
+                      Best hyperparameters ({Object.keys(hyper).length})
+                    </summary>
+                    <KeyValueList
+                      columns="sm:grid-cols-2 lg:grid-cols-3"
+                      items={Object.entries(hyper).map(([k, v]) => ({ label: k, value: typeof v === 'number' ? fmt(v, 6) : str(v) }))}
+                    />
+                  </details>
+                )}
+              </ScientificCard>
+              {repro && <CodeBlock label="Reproduce this experiment" lines={repro.reproduce_with} />}
+              <p className="text-xs text-muted">
+                Commands are shown for reference only; this interface never executes anything on the backend.
+              </p>
+            </div>
+          </ResearchSection>
         </div>
-      )}
+      </div>
     </div>
   )
 }
